@@ -1,0 +1,100 @@
+@page "/products"
+@rendermode InteractiveServer
+@inject IProductCatalogService Catalog
+
+<PageTitle>Products — AutoPrice NZ</PageTitle>
+
+<div class="page-header">
+    <h1>All Products</h1>
+</div>
+
+<div class="filter-bar">
+    <input class="search-input" type="search" placeholder="Search products..."
+           @bind="_search" @bind:after="ApplyFilters" />
+
+    <select class="filter-select" @bind="_selectedCategory" @bind:after="ApplyFilters">
+        <option value="">All Categories</option>
+        @foreach (var cat in _categories)
+        {
+            <option value="@cat">@cat</option>
+        }
+    </select>
+
+    <select class="filter-select" @bind="_selectedRetailer" @bind:after="ApplyFilters">
+        <option value="">All Retailers</option>
+        <option value="Repco">Repco</option>
+        <option value="SupercheapAuto">SupercheapAuto</option>
+    </select>
+
+    <label class="toggle-label">
+        <input type="checkbox" @bind="_onSaleOnly" @bind:after="ApplyFilters" /> On Sale Only
+    </label>
+</div>
+
+<p class="result-count">@_filtered.Count products</p>
+
+@if (_loading)
+{
+    <p>Loading...</p>
+}
+else if (_filtered.Count == 0)
+{
+    <p class="empty-state">No products match your filters.</p>
+}
+else
+{
+    <div class="product-grid">
+        @foreach (var p in _filtered)
+        {
+            <ProductCard Product="@p" />
+        }
+    </div>
+}
+
+@code {
+    private IReadOnlyList<ProductSummaryDto> _all = [];
+    private List<ProductSummaryDto> _filtered = new();
+    private List<string> _categories = new();
+    private string _search = "";
+    private string _selectedCategory = "";
+    private string _selectedRetailer = "";
+    private bool _onSaleOnly;
+    private bool _loading = true;
+
+    protected override async Task OnInitializedAsync()
+    {
+        _all = await Catalog.GetAllProductsAsync();
+
+        _categories = _all
+            .Select(p => p.Category)
+            .Where(c => !string.IsNullOrEmpty(c))
+            .Distinct()
+            .OrderBy(c => c)
+            .ToList()!;
+
+        _loading = false;
+        ApplyFilters();
+    }
+
+    private void ApplyFilters()
+    {
+        _filtered = _all.Where(p =>
+        {
+            if (!string.IsNullOrWhiteSpace(_search) &&
+                !p.Name.Contains(_search, StringComparison.OrdinalIgnoreCase) &&
+                !(p.Brand?.Contains(_search, StringComparison.OrdinalIgnoreCase) ?? false))
+                return false;
+
+            if (!string.IsNullOrEmpty(_selectedCategory) && p.Category != _selectedCategory)
+                return false;
+
+            if (!string.IsNullOrEmpty(_selectedRetailer) && p.Retailer.ToString() != _selectedRetailer)
+                return false;
+
+            if (_onSaleOnly && !p.IsOnSale)
+                return false;
+
+            return true;
+        }).ToList();
+    }
+}

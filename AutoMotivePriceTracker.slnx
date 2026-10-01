@@ -1,0 +1,8 @@
+<Solution>
+  <Folder Name="/src/">
+    <Project Path="src/AutoMotivePriceTracker.Domain/AutoMotivePriceTracker.Domain.csproj" />
+    <Project Path="src/AutoMotivePriceTracker.Application/AutoMotivePriceTracker.Application.csproj" />
+    <Project Path="src/AutoMotivePriceTracker.Infrastructure/AutoMotivePriceTracker.Infrastructure.csproj" />
+    <Project Path="src/AutoMotivePriceTracker.Web/AutoMotivePriceTracker.Web.csproj" />
+  </Folder>
+</Solution>

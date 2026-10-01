@@ -1,0 +1,70 @@
+@if (Records == null || Records.Count < 2)
+{
+    <p class="empty-state">Not enough data to display a chart.</p>
+}
+else
+{
+    @((MarkupString)BuildSvg(Records))
+}
+
+@code {
+    [Parameter, EditorRequired] public IReadOnlyList<PricePointDto>? Records { get; set; }
+
+    private static string BuildSvg(IReadOnlyList<PricePointDto> records)
+    {
+        var sorted = records.OrderBy(r => r.Date).ToList();
+        var prices = sorted.Select(r => (double)r.Price).ToList();
+        double minP = prices.Min(), maxP = prices.Max();
+        double range = maxP - minP == 0 ? 1 : maxP - minP;
+        const int W = 600, H = 200, PL = 60, PR = 10, PT = 15, PB = 35;
+        int cW = W - PL - PR, cH = H - PT - PB;
+
+        double XAt(int i) => PL + i * (double)cW / (sorted.Count - 1);
+        double YAt(double p) => PT + cH - (p - minP) / range * cH;
+
+        var sb = new System.Text.StringBuilder();
+        sb.Append($"<div class=\"price-chart-wrap\"><svg viewBox=\"0 0 {W} {H}\" xmlns=\"http://www.w3.org/2000/svg\" class=\"price-chart-svg\">");
+
+        // grid lines + y labels
+        for (int g = 0; g <= 4; g++)
+        {
+            double gy = PT + g * cH / 4.0;
+            double gv = maxP - g * range / 4.0;
+            sb.Append($"<line x1=\"{PL}\" y1=\"{gy:F1}\" x2=\"{W - PR}\" y2=\"{gy:F1}\" stroke=\"#e0e0e0\" stroke-width=\"1\"/>");
+            sb.Append($"<text x=\"{PL - 4}\" y=\"{gy + 4:F1}\" text-anchor=\"end\" font-size=\"10\" fill=\"#888\">${gv:F0}</text>");
+        }
+
+        // line
+        var pts = string.Join(" ", prices.Select((p, i) => $"{XAt(i):F1},{YAt(p):F1}"));
+        sb.Append($"<polyline points=\"{pts}\" fill=\"none\" stroke=\"#e31837\" stroke-width=\"2\" stroke-linejoin=\"round\"/>");
+
+        // dots with tooltips
+        for (int i = 0; i < sorted.Count; i++)
+        {
+            double cx = XAt(i), cy = YAt(prices[i]);
+            var tip = $"{sorted[i].Date.ToLocalTime():dd MMM yyyy} — ${sorted[i].Price:F2}";
+            sb.Append($"<circle cx=\"{cx:F1}\" cy=\"{cy:F1}\" r=\"4\" fill=\"white\" stroke=\"#e31837\" stroke-width=\"2\"><title>{System.Net.WebUtility.HtmlEncode(tip)}</title></circle>");
+        }
+
+        // x-axis labels
+        var labelIdx = GetLabelIndices(sorted.Count, 5);
+        foreach (int li in labelIdx)
+        {
+            double lx = XAt(li);
+            sb.Append($"<text x=\"{lx:F1}\" y=\"{H - 5}\" text-anchor=\"middle\" font-size=\"9\" fill=\"#888\">{sorted[li].Date.ToLocalTime():dd MMM}</text>");
+        }
+
+        sb.Append("</svg></div>");
+        return sb.ToString();
+    }
+
+    private static List<int> GetLabelIndices(int count, int maxLabels)
+    {
+        if (count <= maxLabels) return Enumerable.Range(0, count).ToList();
+        var result = new List<int> { 0 };
+        int step = (count - 1) / (maxLabels - 1);
+        for (int i = 1; i < maxLabels - 1; i++) result.Add(i * step);
+        result.Add(count - 1);
+        return result;
+    }
+}

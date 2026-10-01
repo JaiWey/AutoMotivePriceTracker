@@ -1,0 +1,49 @@
+# Build output
+[Bb]in/
+[Oo]bj/
+[Dd]ebug/
+[Rr]elease/
+publish/
+*.dll
+*.exe
+*.pdb
+
+# Visual Studio / Rider / VS Code
+.vs/
+.idea/
+.vscode/
+*.user
+*.suo
+*.userprefs
+*.DotSettings.user
+
+# NuGet
+*.nupkg
+*.snupkg
+.nuget/
+packages/
+
+# Test results / coverage
+TestResults/
+coverage/
+*.trx
+
+# Logs
+*.log
+
+# App data (SQLite database)
+**/data/*.db
+**/data/*.db-shm
+**/data/*.db-wal
+
+# Secrets / local config
+appsettings.*.local.json
+secrets.json
+.env
+
+# Claude Code local settings
+.claude/settings.local.json
+
+# OS files
+.DS_Store
+Thumbs.db

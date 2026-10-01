@@ -1,0 +1,95 @@
+using AutoMotivePriceTracker.Application.Abstractions;
+using AutoMotivePriceTracker.Domain.Entities;
+using AutoMotivePriceTracker.Domain.Enums;
+using Microsoft.EntityFrameworkCore;
+
+namespace AutoMotivePriceTracker.Infrastructure.Persistence;
+
+/// <summary>
+/// Uses <see cref="IDbContextFactory{TContext}"/> with a short-lived context per call, so it is
+/// safe to use from Blazor Server components whose lifetime exceeds a single request scope.
+/// </summary>
+public class ProductRepository : IProductRepository
+{
+    private readonly IDbContextFactory<AppDbContext> _dbFactory;
+
+    public ProductRepository(IDbContextFactory<AppDbContext> dbFactory)
+    {
+        _dbFactory = dbFactory;
+    }
+
+    public async Task<IReadOnlyList<Product>> GetOnSaleAsync(int take, CancellationToken ct = default)
+    {
+        await using var db = await _dbFactory.CreateDbContextAsync(ct);
+        return await db.Products
+            .Include(p => p.PriceHistory)
+            .Where(p => p.PriceHistory.Any(r => r.WasPrice != null && r.WasPrice > r.Price))
+            .OrderByDescending(p => p.LastChecked)
+            .Take(take)
+            .ToListAsync(ct);
+    }
+
+    public async Task<IReadOnlyList<Product>> GetRecentAsync(int take, CancellationToken ct = default)
+    {
+        await using var db = await _dbFactory.CreateDbContextAsync(ct);
+        return await db.Products
+            .Include(p => p.PriceHistory.OrderByDescending(r => r.Date).Take(1))
+            .OrderByDescending(p => p.LastChecked)
+            .Take(take)
+            .ToListAsync(ct);
+    }
+
+    public async Task<IReadOnlyList<Product>> GetAllWithLatestPriceAsync(CancellationToken ct = default)
+    {
+        await using var db = await _dbFactory.CreateDbContextAsync(ct);
+        return await db.Products
+            .Include(p => p.PriceHistory.OrderByDescending(r => r.Date).Take(1))
+            .OrderByDescending(p => p.LastChecked)
+            .ToListAsync(ct);
+    }
+
+    public async Task<Product?> GetByIdWithHistoryAsync(int id, CancellationToken ct = default)
+    {
+        await using var db = await _dbFactory.CreateDbContextAsync(ct);
+        return await db.Products
+            .Include(p => p.PriceHistory.OrderByDescending(r => r.Date))
+            .FirstOrDefaultAsync(p => p.Id == id, ct);
+    }
+
+    public async Task<IReadOnlyDictionary<Retailer, int>> CountByRetailerAsync(CancellationToken ct = default)
+    {
+        await using var db = await _dbFactory.CreateDbContextAsync(ct);
+        var counts = await db.Products
+            .GroupBy(p => p.Retailer)
+            .Select(g => new { Retailer = g.Key, Count = g.Count() })
+            .ToListAsync(ct);
+
+        return Enum.GetValues<Retailer>().ToDictionary(
+            r => r,
+            r => counts.FirstOrDefault(c => c.Retailer == r)?.Count ?? 0);
+    }
+
+    public async Task UpsertScrapedAsync(IEnumerable<Product> scraped, DateTime now, CancellationToken ct = default)
+    {
+        await using var db = await _dbFactory.CreateDbContextAsync(ct);
+
+        foreach (var incoming in scraped)
+        {
+            var existing = await db.Products
+                .Include(p => p.PriceHistory)
+                .FirstOrDefaultAsync(p => p.Sku == incoming.Sku && p.Retailer == incoming.Retailer, ct);
+
+            if (existing == null)
+            {
+                incoming.MarkAsNew(now);
+                db.Products.Add(incoming);
+            }
+            else
+            {
+                existing.ApplyScrape(incoming, now);
+            }
+        }
+
+        await db.SaveChangesAsync(ct);
+    }
+}
