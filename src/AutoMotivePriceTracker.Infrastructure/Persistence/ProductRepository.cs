@@ -73,23 +73,44 @@ public class ProductRepository : IProductRepository
     {
         await using var db = await _dbFactory.CreateDbContextAsync(ct);
 
-        foreach (var incoming in scraped)
-        {
-            var existing = await db.Products
-                .Include(p => p.PriceHistory)
-                .FirstOrDefaultAsync(p => p.Sku == incoming.Sku && p.Retailer == incoming.Retailer, ct);
+        // The same product can appear on several pages/categories; keep one per (retailer, SKU)
+        var incomingByKey = scraped
+            .GroupBy(p => (p.Retailer, p.Sku))
+            .ToDictionary(g => g.Key, g => g.First());
 
-            if (existing == null)
+        // Load existing rows in a few queries instead of one SELECT per product.
+        // Chunked to stay well below SQLite's parameter limit.
+        var existingByKey = new Dictionary<(Retailer, string), Product>();
+        foreach (var retailerGroup in incomingByKey.Keys.GroupBy(k => k.Retailer))
+        {
+            var retailer = retailerGroup.Key;
+            foreach (var skus in retailerGroup.Select(k => k.Sku).Chunk(500))
             {
-                incoming.MarkAsNew(now);
-                db.Products.Add(incoming);
-            }
-            else
-            {
-                existing.ApplyScrape(incoming, now);
+                var found = await db.Products
+                    .Include(p => p.PriceHistory)
+                    .Where(p => p.Retailer == retailer && skus.Contains(p.Sku))
+                    .ToListAsync(ct);
+
+                foreach (var p in found)
+                    existingByKey[(p.Retailer, p.Sku)] = p;
             }
         }
 
+        var newProducts = new List<Product>();
+        foreach (var (key, incoming) in incomingByKey)
+        {
+            if (existingByKey.TryGetValue(key, out var existing))
+            {
+                existing.ApplyScrape(incoming, now);
+            }
+            else
+            {
+                incoming.MarkAsNew(now);
+                newProducts.Add(incoming);
+            }
+        }
+
+        db.Products.AddRange(newProducts);
         await db.SaveChangesAsync(ct);
     }
 }

@@ -15,28 +15,30 @@ public class SupercheapAutoScraper : BaseScraper
 
     protected override IEnumerable<string> CategoryUrls => new[]
     {
-        $"{BaseUrl}/c/engine-oils-fluids",
-        $"{BaseUrl}/c/filters",
-        $"{BaseUrl}/c/batteries",
-        $"{BaseUrl}/c/brakes",
-        $"{BaseUrl}/c/wipers",
-        $"{BaseUrl}/c/spark-plugs",
-        $"{BaseUrl}/c/coolants-additives",
-        $"{BaseUrl}/c/car-care",
+        $"{BaseUrl}/oils-fluids-filters/engine-oil",
+        $"{BaseUrl}/oils-fluids-filters/filters",
+        $"{BaseUrl}/oils-fluids-filters/coolant",
+        $"{BaseUrl}/oils-fluids-filters/fluids",
+        $"{BaseUrl}/batteries-electrical/batteries",
+        $"{BaseUrl}/spare-parts/wipers",
+        $"{BaseUrl}/spare-parts/ignition-start-charge",
+        $"{BaseUrl}/spare-parts/cooling",
     };
+
+    private const string CardSelector = ".product-tile[data-itemid]";
 
     protected override async Task<List<Product>> ScrapeCategoryPageAsync(IPage page, string categoryUrl, CancellationToken ct)
     {
         var products = new List<Product>();
         var currentUrl = categoryUrl;
+        var visited = new HashSet<string>();
 
-        while (true)
+        while (visited.Add(currentUrl))
         {
             await NavigateWithRetryAsync(page, currentUrl);
-            await page.WaitForSelectorAsync(".product-tile, .product-card, [data-component='ProductTile'], [class*='product-item']",
-                new PageWaitForSelectorOptions { Timeout = 15_000 });
+            await page.WaitForSelectorAsync(CardSelector, new PageWaitForSelectorOptions { Timeout = 15_000 });
 
-            var cards = await page.QuerySelectorAllAsync(".product-tile, .product-card, [data-component='ProductTile'], [class*='product-item']");
+            var cards = await page.QuerySelectorAllAsync(CardSelector);
 
             foreach (var card in cards)
             {
@@ -47,7 +49,7 @@ public class SupercheapAutoScraper : BaseScraper
 
             Logger.LogInformation("Scraped {Count} products from {Url}", products.Count, currentUrl);
 
-            var nextBtn = await page.QuerySelectorAsync("a[aria-label='Next'], .next-page:not(.disabled), [data-testid='pagination-next']");
+            var nextBtn = await page.QuerySelectorAsync("a.page-next");
             if (nextBtn == null) break;
 
             var nextHref = await nextBtn.GetAttributeAsync("href");
@@ -64,27 +66,14 @@ public class SupercheapAutoScraper : BaseScraper
     {
         try
         {
-            var name = await card.EvalOnSelectorAsync<string?>(
-                ".product-title, .product-name, [data-testid='product-name'], h2, h3",
-                "el => el?.textContent?.trim()");
+            var name = await TextOrNullAsync(card, ".product-name a.name-link");
+            var priceText = await TextOrNullAsync(card, ".product-sales-price .the-price");
+            // only present on discounted tiles
+            var wasPriceText = await TextOrNullAsync(card, ".product-standard-price .the-price");
+            var linkHref = await AttrOrNullAsync(card, ".product-name a.name-link", "href");
+            var imageUrl = await AttrOrNullAsync(card, ".product-image img", "src");
 
-            var priceText = await card.EvalOnSelectorAsync<string?>(
-                ".price-current, .selling-price, [data-testid='price'], .price__value",
-                "el => el?.textContent?.trim()");
-
-            var wasPriceText = await card.EvalOnSelectorAsync<string?>(
-                ".price-was, .was-price, [data-testid='was-price'], .price__was",
-                "el => el?.textContent?.trim()");
-
-            var linkHref = await card.EvalOnSelectorAsync<string?>(
-                "a[href]", "el => el?.getAttribute('href')");
-
-            var imageUrl = await card.EvalOnSelectorAsync<string?>(
-                "img[src], img[data-src]", "el => el?.getAttribute('src') ?? el?.getAttribute('data-src')");
-
-            var sku = await card.EvalOnSelectorAsync<string?>(
-                "[data-product-id], [data-part-number], [data-sku]",
-                "el => el?.getAttribute('data-product-id') ?? el?.getAttribute('data-part-number') ?? el?.getAttribute('data-sku')");
+            var sku = await card.GetAttributeAsync("data-itemid");
 
             if (string.IsNullOrWhiteSpace(name) || string.IsNullOrWhiteSpace(priceText))
                 return null;
@@ -93,17 +82,14 @@ public class SupercheapAutoScraper : BaseScraper
             if (price <= 0) return null;
 
             var productUrl = string.IsNullOrEmpty(linkHref) ? categoryUrl
-                : linkHref.StartsWith("http") ? linkHref : BaseUrl + linkHref;
-
-            if (string.IsNullOrEmpty(sku) && productUrl.Contains('/'))
-                sku = productUrl.Split('/').Last().Split('?').First();
+                : (linkHref.StartsWith("http") ? linkHref : BaseUrl + linkHref).Split('?').First();
 
             var category = categoryUrl.Split('/').Last();
 
             return new Product
             {
                 Name = name.Trim(),
-                Sku = sku ?? Guid.NewGuid().ToString("N")[..8],
+                Sku = sku ?? productUrl.Split('/').Last().Split('.').First(),
                 Category = category,
                 ImageUrl = imageUrl,
                 SourceUrl = productUrl,

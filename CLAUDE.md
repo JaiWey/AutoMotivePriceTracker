@@ -24,8 +24,10 @@ dotnet ef database update \
   --project src/AutoMotivePriceTracker.Infrastructure \
   --startup-project src/AutoMotivePriceTracker.Web
 
-# Install Playwright browsers (required before first scrape)
-pwsh src/AutoMotivePriceTracker.Infrastructure/bin/Debug/net10.0/playwright.ps1 install chromium
+# Install Playwright browsers (required before first scrape). Run from the Web
+# output: the Infrastructure bin lacks Microsoft.Playwright.dll, so the script
+# fails there. Build the solution first.
+pwsh src/AutoMotivePriceTracker.Web/bin/Debug/net10.0/playwright.ps1 install chromium
 ```
 
 ## Architecture
@@ -41,7 +43,11 @@ Clean Architecture, four projects under `src/`. Dependencies point inward only: 
 
 - **`IDbContextFactory` instead of `AddDbContext`** — Blazor Server components outlive a single request scope. `ProductRepository` creates a short-lived context per call with `await using`.
 - **Scrapers and services are `AddScoped`** — created per scope (manual scrape / background service). `BaseScraper` implements `IAsyncDisposable` to clean up the Playwright browser (one Chromium instance per `ScrapeAsync` call).
-- **Price deduplication** — lives in the domain (`Product.ApplyScrape`): a new `PriceRecord` is only added when price or `WasPrice` changed. `ProductRepository.UpsertScrapedAsync` matches by SKU + retailer.
+- **Scraper selectors and URLs must come from the real site** — don't guess them. Fetch the page (curl with a browser User-Agent) and inspect the markup first. Supercheap Auto uses paths like `/oils-fluids-filters/engine-oil` (the old `/c/...` URLs return 410), product cards are `.product-tile[data-itemid]`, and pagination is `a.page-next`. Repco category URLs need a numeric id (`/<path>/c/<id>`, e.g. `/parts-service/braking/brake-pads/c/1862918117`), product cards are `.product-tile[data-sku]` with `data-sku`/`data-price`/`data-url` attributes, and the next link is `.pagination-next a[rel='next']` (a second `.pagination-next` is "last"). Repco's bot protection returns HTTP 403 intermittently — retry the fetch before concluding a selector or URL is wrong. Only the engine-oil page was inspected in detail; the other Repco categories assume the same template.
+- **Optional elements need null-safe lookups** — `EvalOnSelectorAsync` throws when nothing matches (e.g. a was-price that only exists on discounted tiles), which silently drops the product. Use `BaseScraper.TextOrNullAsync` / `AttrOrNullAsync` for anything that may be absent.
+- **Pagination loops stop on revisits** — scrapers track visited URLs (`while (visited.Add(currentUrl))`), because "next"/"last" links can still exist on the final page.
+- **Fail-fast navigation** — `BaseScraper.NavigateWithRetryAsync` throws `HttpRequestException` on 4xx (except 429) without retrying, so a dead URL (404/410) or a bot block (403) is logged clearly rather than surfacing as a selector timeout.
+- **Price deduplication** — lives in the domain (`Product.ApplyScrape`): a new `PriceRecord` is only added when price or `WasPrice` changed. `ProductRepository.UpsertScrapedAsync` matches by SKU + retailer. It is batched: it dedupes the incoming list per (retailer, SKU), loads existing products in chunked queries (not one `SELECT` per product), then saves new and updated rows in a single `SaveChangesAsync`.
 - **SVG chart** — `PriceChart.razor` builds an inline SVG via `MarkupString` rather than using a chart library. Blazor's Razor compiler conflicts with SVG `<text>` elements, so string building is used.
 - **SQLite DB path** — `{ContentRootPath}/data/prices.db`, created automatically on startup. To reset the database, delete that file and restart the app (migrations recreate the schema).
 - **Migrations** — live in `Infrastructure/Persistence/Migrations` (baseline: `InitialCreate`). `dotnet ef` needs `Microsoft.EntityFrameworkCore.Design` in the startup project, so Web references it with `PrivateAssets=all`.

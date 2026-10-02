@@ -13,30 +13,34 @@ public class RepcoScraper : BaseScraper
 
     public override Retailer Retailer => Retailer.Repco;
 
+    private const string ProductTileSelector = ".product-tile[data-sku]";
+
     protected override IEnumerable<string> CategoryUrls => new[]
     {
-        $"{BaseUrl}/c/engine-oil",
-        $"{BaseUrl}/c/oil-filters",
-        $"{BaseUrl}/c/car-batteries",
-        $"{BaseUrl}/c/brake-pads",
-        $"{BaseUrl}/c/wiper-blades",
-        $"{BaseUrl}/c/spark-plugs",
-        $"{BaseUrl}/c/air-filters",
-        $"{BaseUrl}/c/coolant-antifreeze",
+        // Repco category URLs are /<path>/c/<numeric id>; the id is required.
+        $"{BaseUrl}/oils-fluids/engine-oils-fluids/engine-oil/c/1862918079",
+        $"{BaseUrl}/parts-service/filtration/oil-filters/c/1862918203",
+        $"{BaseUrl}/globes-batteries-electrical/batteries/c/1862917986",
+        $"{BaseUrl}/parts-service/braking/brake-pads/c/1862918117",
+        $"{BaseUrl}/parts-service/wiper-components/wiper-blades/c/2460718084",
+        $"{BaseUrl}/parts-service/ignition/spark-plugs/c/1862918222",
+        $"{BaseUrl}/parts-service/filtration/air-filters/c/1862918196",
+        $"{BaseUrl}/oils-fluids/engine-oils-fluids/coolant/c/1862918078",
     };
 
     protected override async Task<List<Product>> ScrapeCategoryPageAsync(IPage page, string categoryUrl, CancellationToken ct)
     {
         var products = new List<Product>();
         var currentUrl = categoryUrl;
+        var visited = new HashSet<string>();
 
-        while (true)
+        while (visited.Add(currentUrl))
         {
             await NavigateWithRetryAsync(page, currentUrl);
-            await page.WaitForSelectorAsync(".product-list-item, .product-card, [data-component='ProductCard']",
+            await page.WaitForSelectorAsync(ProductTileSelector,
                 new PageWaitForSelectorOptions { Timeout = 15_000 });
 
-            var cards = await page.QuerySelectorAllAsync(".product-list-item, .product-card, [data-component='ProductCard']");
+            var cards = await page.QuerySelectorAllAsync(ProductTileSelector);
 
             foreach (var card in cards)
             {
@@ -48,7 +52,9 @@ public class RepcoScraper : BaseScraper
             Logger.LogInformation("Scraped {Count} products from {Url}", products.Count, currentUrl);
 
             // pagination
-            var nextBtn = await page.QuerySelectorAsync("a[aria-label='Next page'], .pagination-next:not([disabled]), [data-testid='next-page']");
+            // The first .pagination-next is "next"; a second one (double angle) is "last".
+            // Both exist on the final page too, so the visited set in the loop condition ends it.
+            var nextBtn = await page.QuerySelectorAsync(".pagination-next a[rel='next']");
             if (nextBtn == null) break;
 
             var nextHref = await nextBtn.GetAttributeAsync("href");
@@ -65,47 +71,40 @@ public class RepcoScraper : BaseScraper
     {
         try
         {
-            var name = await card.EvalOnSelectorAsync<string?>(
-                ".product-name, [data-testid='product-name'], h2, h3",
-                "el => el?.textContent?.trim()");
+            // The tile itself carries sku / price / url as data-* attributes.
+            var sku = await card.GetAttributeAsync("data-sku");
+            var priceText = await card.GetAttributeAsync("data-price");
+            var linkHref = await card.GetAttributeAsync("data-url");
 
-            var priceText = await card.EvalOnSelectorAsync<string?>(
-                ".product-price .current, .selling-price, [data-testid='selling-price'], .price",
-                "el => el?.textContent?.trim()");
+            var name = await AttrOrNullAsync(card, ".product-name", "title")
+                       ?? await TextOrNullAsync(card, ".product-name");
 
-            var wasPriceText = await card.EvalOnSelectorAsync<string?>(
-                ".product-price .was, .was-price, [data-testid='was-price'], .original-price",
-                "el => el?.textContent?.trim()");
+            // ".savings" holds the crossed-out price on discounted tiles and is empty otherwise
+            var wasPriceText = await TextOrNullAsync(card, ".product-price .savings");
 
-            var linkHref = await card.EvalOnSelectorAsync<string?>(
-                "a[href]", "el => el?.getAttribute('href')");
+            var imageUrl = await AttrOrNullAsync(card, ".img-wrapper img", "src");
 
-            var imageUrl = await card.EvalOnSelectorAsync<string?>(
-                "img[src], img[data-src]", "el => el?.getAttribute('src') ?? el?.getAttribute('data-src')");
-
-            var sku = await card.EvalOnSelectorAsync<string?>(
-                "[data-product-id], [data-sku]",
-                "el => el?.getAttribute('data-product-id') ?? el?.getAttribute('data-sku')");
-
-            if (string.IsNullOrWhiteSpace(name) || string.IsNullOrWhiteSpace(priceText))
+            if (string.IsNullOrWhiteSpace(sku) || string.IsNullOrWhiteSpace(name) || string.IsNullOrWhiteSpace(priceText))
                 return null;
 
             var price = ParsePrice(priceText);
             if (price <= 0) return null;
 
+            var wasPrice = string.IsNullOrWhiteSpace(wasPriceText) ? 0 : ParsePrice(wasPriceText);
+
             var productUrl = string.IsNullOrEmpty(linkHref) ? categoryUrl
-                : linkHref.StartsWith("http") ? linkHref : "https://www.repco.co.nz" + linkHref;
+                : linkHref.StartsWith("http") ? linkHref : BaseUrl + linkHref;
 
-            // derive SKU from URL if not found in attributes
-            if (string.IsNullOrEmpty(sku) && productUrl.Contains('/'))
-                sku = productUrl.Split('/').Last().Split('?').First();
+            if (!string.IsNullOrEmpty(imageUrl) && !imageUrl.StartsWith("http"))
+                imageUrl = BaseUrl + imageUrl;
 
-            var category = categoryUrl.Split('/').Last();
+            // URL ends in .../<slug>/c/<id>, so take the slug before "/c/"
+            var category = categoryUrl.Split("/c/")[0].Split('/').Last();
 
             return new Product
             {
                 Name = name.Trim(),
-                Sku = sku ?? Guid.NewGuid().ToString("N")[..8],
+                Sku = sku,
                 Category = category,
                 ImageUrl = imageUrl,
                 SourceUrl = productUrl,
@@ -116,7 +115,7 @@ public class RepcoScraper : BaseScraper
                     new PriceRecord
                     {
                         Price = price,
-                        WasPrice = string.IsNullOrEmpty(wasPriceText) ? null : ParsePrice(wasPriceText),
+                        WasPrice = wasPrice > price ? wasPrice : null,
                         Date = DateTime.UtcNow
                     }
                 }

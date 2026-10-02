@@ -70,12 +70,25 @@ public abstract class BaseScraper : IProductScraper, IAsyncDisposable
         {
             try
             {
-                await page.GotoAsync(url, new PageGotoOptions
+                var response = await page.GotoAsync(url, new PageGotoOptions
                 {
                     WaitUntil = WaitUntilState.DOMContentLoaded,
                     Timeout = 30_000
                 });
+
+                // Fail fast with a clear message instead of timing out on a missing selector
+                // (403 = bot protection / security check, 404/410 = dead category URL).
+                if (response is { Status: >= 400 and not 429 and < 500 })
+                    throw new HttpRequestException(
+                        $"{url} returned HTTP {response.Status}" +
+                        (response.Status == 403 ? " (likely blocked by bot protection)" : ""),
+                        null, (System.Net.HttpStatusCode)response.Status);
+
                 return true;
+            }
+            catch (HttpRequestException)
+            {
+                throw; // non-retryable client error
             }
             catch
             {
@@ -84,6 +97,20 @@ public abstract class BaseScraper : IProductScraper, IAsyncDisposable
             }
         }
         return false;
+    }
+
+    // EvalOnSelectorAsync throws when nothing matches; these return null instead,
+    // for optional elements such as a was-price that only exists on discounted tiles.
+    protected static async Task<string?> TextOrNullAsync(IElementHandle parent, string selector)
+    {
+        var el = await parent.QuerySelectorAsync(selector);
+        return el == null ? null : (await el.TextContentAsync())?.Trim();
+    }
+
+    protected static async Task<string?> AttrOrNullAsync(IElementHandle parent, string selector, string attribute)
+    {
+        var el = await parent.QuerySelectorAsync(selector);
+        return el == null ? null : await el.GetAttributeAsync(attribute);
     }
 
     public async ValueTask DisposeAsync()
