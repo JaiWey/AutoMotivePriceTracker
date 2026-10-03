@@ -21,15 +21,13 @@ public class RepcoScraper : BaseScraper
         $"{BaseUrl}/oils-fluids/engine-oils-fluids/engine-oil/c/1862918079",
         $"{BaseUrl}/parts-service/filtration/oil-filters/c/1862918203",
         $"{BaseUrl}/globes-batteries-electrical/batteries/c/1862917986",
-        $"{BaseUrl}/parts-service/braking/brake-pads/c/1862918117",
-        $"{BaseUrl}/parts-service/wiper-components/wiper-blades/c/2460718084",
-        $"{BaseUrl}/parts-service/ignition/spark-plugs/c/1862918222",
-        $"{BaseUrl}/parts-service/filtration/air-filters/c/1862918196",
-        $"{BaseUrl}/oils-fluids/engine-oils-fluids/coolant/c/1862918078",
-        $"/oils-fluids/degreasers-cleaners/c/1862918062",
-        $"https://www.repco.co.nz/car-care-panel/car-care/c/1862917930",
-        $"/tools-equipment/garage-tools-equipment/c/1862917873",
-		"https://www.repco.co.nz/globes-batteries-electrical/batteries/c/1862917986"
+  //      $"{BaseUrl}/parts-service/braking/brake-pads/c/1862918117",
+  //      $"{BaseUrl}/parts-service/wiper-components/wiper-blades/c/2460718084",
+  //      $"{BaseUrl}/oils-fluids/engine-oils-fluids/coolant/c/1862918078",
+  //      $"{BaseUrl}/oils-fluids/degreasers-cleaners/c/1862918062",
+  //      $"{BaseUrl}/car-care-panel/car-care/c/1862917930",
+  //      $"{BaseUrl}/tools-equipment/garage-tools-equipment/c/1862917873",
+		//$"{BaseUrl}/globes-batteries-electrical/batteries/c/1862917986"
 	};
 
     protected override async Task<List<Product>> ScrapeCategoryPageAsync(IPage page, string categoryUrl, CancellationToken ct)

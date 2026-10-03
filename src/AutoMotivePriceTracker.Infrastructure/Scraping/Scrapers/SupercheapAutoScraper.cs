@@ -16,17 +16,17 @@ public class SupercheapAutoScraper : BaseScraper
     protected override IEnumerable<string> CategoryUrls => new[]
     {
         $"{BaseUrl}/oils-fluids-filters/engine-oil",
-        $"{BaseUrl}/oils-fluids-filters/filters",
+       // $"{BaseUrl}/oils-fluids-filters/filters",
         $"{BaseUrl}/oils-fluids-filters/coolant",
-        $"{BaseUrl}/oils-fluids-filters/fluids",
-        $"/oils-fluids-filters/additives?",
-        $"https://www.supercheapauto.co.nz/car-care-cleaning/cleaning",
-        $"https://www.supercheapauto.co.nz/car-care-cleaning/wax-polish-detailing",
-        $"/car-care-cleaning/wax-polish-detailing",
-		$"{BaseUrl}/tools-garage/tool-kit",
-		$"/tools-garage/hand-tools",
-        $"/tools-garage/garage-workshop",
-        $"{BaseUrl}/batteries-electrical/batteries",
+  //      $"{BaseUrl}/oils-fluids-filters/fluids",
+  //      $"{BaseUrl}/oils-fluids-filters/additives",
+  //      $"{BaseUrl}/car-care-cleaning/cleaning",
+  //      $"{BaseUrl}/car-care-cleaning/wax-polish-detailing",
+  //      $"{BaseUrl}/car-care-cleaning/wax-polish-detailing",
+		//$"{BaseUrl}/tools-garage/tool-kit",
+		//$"{BaseUrl}/tools-garage/hand-tools",
+  //      $"{BaseUrl}/tools-garage/garage-workshop",
+  //      $"{BaseUrl}/batteries-electrical/batteries",
 
     };
 

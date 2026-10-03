@@ -15,7 +15,7 @@ public static class DependencyInjection
         services.AddScoped<IProductRepository, ProductRepository>();
 
         // Scrapers: add new retailers here
-        services.AddScoped<IProductScraper, RepcoScraper>();
+       // services.AddScoped<IProductScraper, RepcoScraper>();
         services.AddScoped<IProductScraper, SupercheapAutoScraper>();
 
         return services;
