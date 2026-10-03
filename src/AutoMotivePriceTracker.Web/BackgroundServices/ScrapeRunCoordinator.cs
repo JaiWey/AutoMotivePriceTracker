@@ -59,7 +59,7 @@ public class ScrapeRunCoordinator
         var started = Status.StartedAt;
         try
         {
-            using var scope = _services.CreateScope();
+            await using var scope = _services.CreateAsyncScope();
             var service = scope.ServiceProvider.GetRequiredService<IPriceScrapingService>();
             await service.RunAllAsync(ct);
             Finish(new ScrapeStatus(ScrapeState.Succeeded, started, DateTime.UtcNow, null));
