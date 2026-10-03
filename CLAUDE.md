@@ -17,6 +17,8 @@ dotnet run --project src/AutoMotivePriceTracker.Web
 # Run the Angular client (http://localhost:4200; talks to the API at environment.apiUrl)
 cd src/AutoMotivePriceTracker.Client && npm install && npx ng serve
 # Production build: npx ng build (set apiUrl in src/environments/environment.production.ts)
+# SSR: `ng build` also emits a Node server; run it with `npm run serve:ssr:AutoMotivePriceTracker.Client` (port 4000, PORT env).
+# In production set NG_ALLOWED_HOSTS=<public host>[,..] (angular.json only allows localhost) and make apiUrl reachable from the Node process.
 
 # Run tests. .NET: xUnit in tests/AutoMotivePriceTracker.Tests (domain, services, repository on a
 # real PostgreSQL via Testcontainers with the real migrations (needs Docker), API endpoints via TestServer). Add -c Release if a
@@ -54,7 +56,7 @@ Clean Architecture, four .NET projects plus an Angular client under `src/`. Depe
 - **Application** — use cases and the ports they need. `IProductScraper` and `IProductRepository` (abstractions implemented by Infrastructure), DTOs (`ProductSummaryDto`, `ProductDetailDto`, `PricePointDto`, `HomeSummaryDto`), and services `IProductCatalogService` (queries for the UI) and `IPriceScrapingService` (runs all scrapers and persists results). Registered via `AddApplication()`.
 - **Infrastructure** — EF Core/PostgreSQL via Npgsql (`Persistence/AppDbContext`, `ProductRepository`, `Persistence/Migrations`) and Playwright scrapers (`Scraping/BaseScraper`, `Scraping/Scrapers/*`). Registered via `AddInfrastructure(connectionString)`; `InitializeDatabaseAsync()` applies migrations.
 - **Web** — JSON minimal API (`Endpoints/ApiEndpoints.cs`), `ScraperBackgroundService` (full scrape 10s after startup, then every 24h), `ScrapeRunCoordinator` and the composition root in `Program.cs`. Endpoints depend only on Application services/DTOs, never on EF or `AppDbContext`.
-- **AutoMotivePriceTracker.Client** — Angular (standalone components, signals) SPA, deployed separately from the API. Pages: Home, Products (client-side filtering), Product detail (Chart.js via ng2-charts), Admin (triggers/polls scrapes). The API base URL comes from `src/environments/`.
+- **AutoMotivePriceTracker.Client** — Angular (standalone components, signals) SPA with server-side rendering (`@angular/ssr`, Express in `src/server.ts`; hydration + `withFetch()`), deployed separately from the API as a Node app. `app.routes.server.ts`: all routes render per request (`RenderMode.Server`) except `admin`, which is client-only (it polls with timers). Server-side API calls come from the Node process, so `environment.apiUrl` must be reachable from it. Pages: Home, Products (client-side filtering), Product detail (Chart.js via ng2-charts), Admin (triggers/polls scrapes). The API base URL comes from `src/environments/`.
 
 ### Key design decisions
 
