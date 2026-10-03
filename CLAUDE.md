@@ -5,11 +5,27 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 ## Commands
 
 ```bash
+# Start PostgreSQL (needed to run the app; dev connection string is in appsettings.Development.json)
+docker compose up -d --wait
+
 # Build entire solution
 dotnet build
 
-# Run the web app (starts on http://localhost:5xxx)
+# Run the API (http://localhost:5052)
 dotnet run --project src/AutoMotivePriceTracker.Web
+
+# Run the Angular client (http://localhost:4200; talks to the API at environment.apiUrl)
+cd src/AutoMotivePriceTracker.Client && npm install && npx ng serve
+# Production build: npx ng build (set apiUrl in src/environments/environment.production.ts)
+
+# Run tests. .NET: xUnit in tests/AutoMotivePriceTracker.Tests (domain, services, repository on a
+# real PostgreSQL via Testcontainers with the real migrations (needs Docker), API endpoints via TestServer). Add -c Release if a
+# running app locks the Debug build. Angular: Vitest via the Angular CLI.
+dotnet test
+cd src/AutoMotivePriceTracker.Client && npx ng test --no-watch
+# End-to-end (Playwright, installed Edge): starts its own API on :5099 (database `autoprice_e2e` on the
+# compose PostgreSQL, seeded by e2e/seed.ts, Scraping:Enabled=false) and `ng serve --configuration e2e` on :4299, then drives the UI.
+npm run e2e
 
 # Add a new EF Core migration (run from solution root)
 dotnet ef migrations add <MigrationName> \
@@ -32,26 +48,32 @@ pwsh src/AutoMotivePriceTracker.Web/bin/Debug/net10.0/playwright.ps1 install chr
 
 ## Architecture
 
-Clean Architecture, four projects under `src/`. Dependencies point inward only: `Web → Infrastructure → Application → Domain` (Web also references Application).
+Clean Architecture, four .NET projects plus an Angular client under `src/`. Dependencies point inward only: `Web → Infrastructure → Application → Domain` (Web also references Application).
 
 - **Domain** — entities (`Product`, `PriceRecord`) and the `Retailer` enum. No dependencies. Holds business rules, e.g. `Product.ApplyScrape` (price deduplication).
 - **Application** — use cases and the ports they need. `IProductScraper` and `IProductRepository` (abstractions implemented by Infrastructure), DTOs (`ProductSummaryDto`, `ProductDetailDto`, `PricePointDto`, `HomeSummaryDto`), and services `IProductCatalogService` (queries for the UI) and `IPriceScrapingService` (runs all scrapers and persists results). Registered via `AddApplication()`.
-- **Infrastructure** — EF Core/SQLite (`Persistence/AppDbContext`, `ProductRepository`, `Persistence/Migrations`) and Playwright scrapers (`Scraping/BaseScraper`, `Scraping/Scrapers/*`). Registered via `AddInfrastructure(dbPath)`; `InitializeDatabaseAsync()` applies migrations.
-- **Web** — Blazor Server UI, `ScraperBackgroundService` (full scrape 10s after startup, then every 24h) and the composition root in `Program.cs`. Components depend only on Application services/DTOs, never on EF or `AppDbContext`.
+- **Infrastructure** — EF Core/PostgreSQL via Npgsql (`Persistence/AppDbContext`, `ProductRepository`, `Persistence/Migrations`) and Playwright scrapers (`Scraping/BaseScraper`, `Scraping/Scrapers/*`). Registered via `AddInfrastructure(connectionString)`; `InitializeDatabaseAsync()` applies migrations.
+- **Web** — JSON minimal API (`Endpoints/ApiEndpoints.cs`), `ScraperBackgroundService` (full scrape 10s after startup, then every 24h), `ScrapeRunCoordinator` and the composition root in `Program.cs`. Endpoints depend only on Application services/DTOs, never on EF or `AppDbContext`.
+- **AutoMotivePriceTracker.Client** — Angular (standalone components, signals) SPA, deployed separately from the API. Pages: Home, Products (client-side filtering), Product detail (Chart.js via ng2-charts), Admin (triggers/polls scrapes). The API base URL comes from `src/environments/`.
 
 ### Key design decisions
 
-- **`IDbContextFactory` instead of `AddDbContext`** — Blazor Server components outlive a single request scope. `ProductRepository` creates a short-lived context per call with `await using`.
+- **`IDbContextFactory` instead of `AddDbContext`** — kept from the Blazor era; `ProductRepository` creates a short-lived context per call with `await using`, which also suits the singleton-triggered background scrapes.
 - **Scrapers and services are `AddScoped`** — created per scope (manual scrape / background service). `BaseScraper` implements `IAsyncDisposable` to clean up the Playwright browser (one Chromium instance per `ScrapeAsync` call).
 - **Scraper selectors and URLs must come from the real site** — don't guess them. Fetch the page (curl with a browser User-Agent) and inspect the markup first. Supercheap Auto uses paths like `/oils-fluids-filters/engine-oil` (the old `/c/...` URLs return 410), product cards are `.product-tile[data-itemid]`, and pagination is `a.page-next`. Repco category URLs need a numeric id (`/<path>/c/<id>`, e.g. `/parts-service/braking/brake-pads/c/1862918117`), product cards are `.product-tile[data-sku]` with `data-sku`/`data-price`/`data-url` attributes, and the next link is `.pagination-next a[rel='next']` (a second `.pagination-next` is "last"). Repco's bot protection returns HTTP 403 intermittently — retry the fetch before concluding a selector or URL is wrong. Only the engine-oil page was inspected in detail; the other Repco categories assume the same template.
 - **Optional elements need null-safe lookups** — `EvalOnSelectorAsync` throws when nothing matches (e.g. a was-price that only exists on discounted tiles), which silently drops the product. Use `BaseScraper.TextOrNullAsync` / `AttrOrNullAsync` for anything that may be absent.
 - **Pagination loops stop on revisits** — scrapers track visited URLs (`while (visited.Add(currentUrl))`), because "next"/"last" links can still exist on the final page.
 - **Fail-fast navigation** — `BaseScraper.NavigateWithRetryAsync` throws `HttpRequestException` on 4xx (except 429) without retrying, so a dead URL (404/410) or a bot block (403) is logged clearly rather than surfacing as a selector timeout.
+- **Product features** — `Product.Features` (`text[]`) holds the bullet points from each product page: Repco `.feature__list li`, Supercheap `#product-features li` (both present in the server HTML at DOMContentLoaded). `PriceScrapingService` runs it after each retailer's price scrape: `IProductRepository.GetMissingFeaturesAsync` returns products with `FeaturesScrapedAt == null` (capped at `FeaturePagesPerRun` = 300 per retailer per run, so a first run fills in over several days), `IProductScraper.ScrapeFeaturesAsync` loads each product page, `SaveFeaturesAsync` stores the result. Features are fetched once, not refreshed; a page that fails to load is left out and retried next run. Feature failures never fail the price scrape.
 - **Price deduplication** — lives in the domain (`Product.ApplyScrape`): a new `PriceRecord` is only added when price or `WasPrice` changed. `ProductRepository.UpsertScrapedAsync` matches by SKU + retailer. It is batched: it dedupes the incoming list per (retailer, SKU), loads existing products in chunked queries (not one `SELECT` per product), then saves new and updated rows in a single `SaveChangesAsync`.
-- **SVG chart** — `PriceChart.razor` builds an inline SVG via `MarkupString` rather than using a chart library. Blazor's Razor compiler conflicts with SVG `<text>` elements, so string building is used.
-- **SQLite DB path** — `{ContentRootPath}/data/prices.db`, created automatically on startup. To reset the database, delete that file and restart the app (migrations recreate the schema).
+- **JSON API contract** — enums serialize as strings (`JsonStringEnumConverter`) and `DateTime`s always as UTC with a `Z` suffix (`Json/UtcDateTimeConverter`, a safeguard so a DateTime of Unspecified kind is never serialized without its zone). CORS origins come from `Cors:AllowedOrigins` (default `http://localhost:4200`). Endpoints: `GET /api/home`, `GET /api/products`, `GET /api/products/{id}`, `POST /api/admin/scrape` (202, or 409 if running), `GET /api/admin/scrape/status`.
+- **Logging** — Serilog behind `ILogger<T>` (`builder.Host.UseSerilog` in `Program.cs`, request logging via `UseSerilogRequestLogging`). Levels and sinks live in the `Serilog` section of `appsettings.json` (console + daily rolling file `logs/app-.log`, 14 files kept; `*.log` is gitignored). Application/Infrastructure keep depending only on `Microsoft.Extensions.Logging`.
+- **Config switches** — `ConnectionStrings:Default` (required; dev default in `appsettings.Development.json`, set it via config/env elsewhere) and `Scraping:Enabled=false` removes all scrapers and the scheduled run (used by the e2e stack).
+- **Scrape coordination** — `ScrapeRunCoordinator` (singleton) ensures manual and scheduled scrapes never overlap and holds the last run's status. `PriceScrapingService.RunAllAsync` swallows per-scraper errors, so `Succeeded` doesn't guarantee every scraper worked.
+- **Database** — PostgreSQL (`docker-compose.yml`, service `postgres`, db `autoprice`). Migrations run on startup and create the database if missing. To reset: `docker compose down -v` (drops the volume) and restart the app. Timestamps are `timestamptz` and Npgsql requires UTC `DateTime`s — always use `DateTime.UtcNow`. Prices are `numeric(18,2)`.
+- **One-off SQLite import** — `dotnet run --project tools/AutoMotivePriceTracker.SqliteImport -- <prices.db> <connection-string>` copies the legacy SQLite data (ids preserved) into an empty, migrated PostgreSQL database; it refuses a non-empty target.
 - **Migrations** — live in `Infrastructure/Persistence/Migrations` (baseline: `InitialCreate`). `dotnet ef` needs `Microsoft.EntityFrameworkCore.Design` in the startup project, so Web references it with `PrivateAssets=all`.
-- **DTOs at the boundary** — the repository returns domain entities; Application services map them to DTOs (`ProductSummaryDto` etc.), which are what Razor components bind to. Product list filtering stays in the UI over `ProductSummaryDto`.
+- **DTOs at the boundary** — the repository returns domain entities; Application services map them to DTOs (`ProductSummaryDto` etc.), which are what the API returns and the Angular client mirrors (`src/app/models/models.ts`). Product list filtering stays in the Angular client over the `ProductSummaryDto` list.
 - **Dev gotcha** — a running `dotnet run` locks `Web/bin/Debug`; stop it before rebuilding, or build with `--configuration Release`.
 
 ### Adding a new retailer

@@ -9,6 +9,9 @@ public class PriceScrapingService : IPriceScrapingService
     private readonly IProductRepository _products;
     private readonly ILogger<PriceScrapingService> _logger;
 
+    // Each product needs its own page load, so a first run is spread over several runs.
+    public const int FeaturePagesPerRun = 300;
+
     public PriceScrapingService(
         IEnumerable<IProductScraper> scrapers,
         IProductRepository products,
@@ -31,11 +34,33 @@ public class PriceScrapingService : IPriceScrapingService
                 var products = (await scraper.ScrapeAsync(ct)).ToList();
                 await _products.UpsertScrapedAsync(products, DateTime.UtcNow, ct);
                 _logger.LogInformation("Finished scrape for {Retailer}: {Count} products", scraper.Retailer, products.Count);
+                await ScrapeFeaturesAsync(scraper, ct);
             }
             catch (Exception ex)
             {
                 _logger.LogError(ex, "Scrape failed for {Retailer}", scraper.Retailer);
             }
+        }
+    }
+
+    private async Task ScrapeFeaturesAsync(IProductScraper scraper, CancellationToken ct)
+    {
+        if (ct.IsCancellationRequested) return;
+
+        try
+        {
+            var missing = await _products.GetMissingFeaturesAsync(scraper.Retailer, FeaturePagesPerRun, ct);
+            if (missing.Count == 0) return;
+
+            var features = await scraper.ScrapeFeaturesAsync(missing, ct);
+            await _products.SaveFeaturesAsync(scraper.Retailer, features, DateTime.UtcNow, ct);
+            _logger.LogInformation("Scraped features for {Count}/{Requested} {Retailer} products",
+                features.Count, missing.Count, scraper.Retailer);
+        }
+        catch (Exception ex)
+        {
+            // Features are secondary to prices; a failure here must not fail the price scrape.
+            _logger.LogError(ex, "Feature scrape failed for {Retailer}", scraper.Retailer);
         }
     }
 }

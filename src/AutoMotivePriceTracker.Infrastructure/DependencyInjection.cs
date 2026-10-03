@@ -8,16 +8,14 @@ namespace AutoMotivePriceTracker.Infrastructure;
 
 public static class DependencyInjection
 {
-    public static IServiceCollection AddInfrastructure(this IServiceCollection services, string sqliteDbPath)
+    public static IServiceCollection AddInfrastructure(this IServiceCollection services, string connectionString)
     {
-        Directory.CreateDirectory(Path.GetDirectoryName(sqliteDbPath)!);
-
         services.AddDbContextFactory<AppDbContext>(opt =>
-            opt.UseSqlite($"Data Source={sqliteDbPath}"));
+            opt.UseNpgsql(connectionString));
         services.AddScoped<IProductRepository, ProductRepository>();
 
         // Scrapers: add new retailers here
-       // services.AddScoped<IProductScraper, RepcoScraper>();
+        services.AddScoped<IProductScraper, RepcoScraper>();
         services.AddScoped<IProductScraper, SupercheapAutoScraper>();
 
         return services;

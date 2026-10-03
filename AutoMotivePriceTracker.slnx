@@ -5,4 +5,10 @@
     <Project Path="src/AutoMotivePriceTracker.Infrastructure/AutoMotivePriceTracker.Infrastructure.csproj" />
     <Project Path="src/AutoMotivePriceTracker.Web/AutoMotivePriceTracker.Web.csproj" />
   </Folder>
+  <Folder Name="/tests/">
+    <Project Path="tests/AutoMotivePriceTracker.Tests/AutoMotivePriceTracker.Tests.csproj" />
+  </Folder>
+  <Folder Name="/tools/">
+    <Project Path="tools/AutoMotivePriceTracker.SqliteImport/AutoMotivePriceTracker.SqliteImport.csproj" />
+  </Folder>
 </Solution>

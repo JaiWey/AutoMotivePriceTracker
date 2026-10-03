@@ -1,0 +1,23 @@
+# Local PostgreSQL for development and e2e tests.
+#   docker compose up -d --wait
+# Matches ConnectionStrings:Default in src/AutoMotivePriceTracker.Web/appsettings.Development.json.
+services:
+  postgres:
+    image: postgres:17
+    container_name: autoprice-postgres
+    environment:
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: postgres
+      POSTGRES_DB: autoprice
+    ports:
+      - "5432:5432"
+    volumes:
+      - autoprice-pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres -d autoprice"]
+      interval: 2s
+      timeout: 3s
+      retries: 30
+
+volumes:
+  autoprice-pgdata:

@@ -19,6 +19,13 @@ public interface IProductRepository
 
     Task<IReadOnlyDictionary<Retailer, int>> CountByRetailerAsync(CancellationToken ct = default);
 
+    /// <summary>Up to <paramref name="take"/> of a retailer's products whose page has never been read for features.</summary>
+    Task<IReadOnlyList<Product>> GetMissingFeaturesAsync(Retailer retailer, int take, CancellationToken ct = default);
+
+    /// <summary>Stores scraped features (keyed by SKU) on a retailer's products.</summary>
+    Task SaveFeaturesAsync(Retailer retailer, IReadOnlyDictionary<string, IReadOnlyList<string>> featuresBySku,
+        DateTime now, CancellationToken ct = default);
+
     /// <summary>Inserts new products and applies <see cref="Product.ApplyScrape"/> to existing ones (matched by SKU + retailer).</summary>
     Task UpsertScrapedAsync(IEnumerable<Product> scraped, DateTime now, CancellationToken ct = default);
 }

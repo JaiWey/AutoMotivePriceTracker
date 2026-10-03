@@ -1,15 +1,13 @@
-using AutoMotivePriceTracker.Application.Services;
-
 namespace AutoMotivePriceTracker.Web.BackgroundServices;
 
 public class ScraperBackgroundService : BackgroundService
 {
-    private readonly IServiceProvider _services;
+    private readonly ScrapeRunCoordinator _coordinator;
     private readonly ILogger<ScraperBackgroundService> _logger;
 
-    public ScraperBackgroundService(IServiceProvider services, ILogger<ScraperBackgroundService> logger)
+    public ScraperBackgroundService(ScrapeRunCoordinator coordinator, ILogger<ScraperBackgroundService> logger)
     {
-        _services = services;
+        _coordinator = coordinator;
         _logger = logger;
     }
 
@@ -21,16 +19,8 @@ public class ScraperBackgroundService : BackgroundService
         while (!ct.IsCancellationRequested)
         {
             _logger.LogInformation("Scheduled scrape starting");
-            try
-            {
-                using var scope = _services.CreateScope();
-                var service = scope.ServiceProvider.GetRequiredService<IPriceScrapingService>();
-                await service.RunAllAsync(ct);
-            }
-            catch (Exception ex) when (ex is not OperationCanceledException)
-            {
-                _logger.LogError(ex, "Scheduled scrape encountered an error");
-            }
+            if (!await _coordinator.TryRunAsync(ct))
+                _logger.LogInformation("Scheduled scrape skipped: a scrape is already running");
 
             _logger.LogInformation("Next scrape in 24 hours");
             await Task.Delay(TimeSpan.FromHours(24), ct);

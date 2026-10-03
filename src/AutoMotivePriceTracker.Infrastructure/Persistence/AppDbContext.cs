@@ -25,6 +25,8 @@ public class AppDbContext : DbContext
 
         modelBuilder.Entity<PriceRecord>(e =>
         {
+            e.Property(r => r.Price).HasPrecision(18, 2);
+            e.Property(r => r.WasPrice).HasPrecision(18, 2);
             e.HasIndex(r => new { r.ProductId, r.Date });
         });
     }

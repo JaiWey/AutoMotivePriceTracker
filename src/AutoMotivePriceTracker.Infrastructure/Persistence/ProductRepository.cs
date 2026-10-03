@@ -69,6 +69,34 @@ public class ProductRepository : IProductRepository
             r => counts.FirstOrDefault(c => c.Retailer == r)?.Count ?? 0);
     }
 
+    public async Task<IReadOnlyList<Product>> GetMissingFeaturesAsync(Retailer retailer, int take, CancellationToken ct = default)
+    {
+        await using var db = await _dbFactory.CreateDbContextAsync(ct);
+        return await db.Products
+            .Where(p => p.Retailer == retailer && p.FeaturesScrapedAt == null)
+            .OrderBy(p => p.Id)
+            .Take(take)
+            .ToListAsync(ct);
+    }
+
+    public async Task SaveFeaturesAsync(Retailer retailer, IReadOnlyDictionary<string, IReadOnlyList<string>> featuresBySku,
+        DateTime now, CancellationToken ct = default)
+    {
+        await using var db = await _dbFactory.CreateDbContextAsync(ct);
+
+        foreach (var skus in featuresBySku.Keys.Chunk(500))
+        {
+            var products = await db.Products
+                .Where(p => p.Retailer == retailer && skus.Contains(p.Sku))
+                .ToListAsync(ct);
+
+            foreach (var p in products)
+                p.SetFeatures(featuresBySku[p.Sku], now);
+        }
+
+        await db.SaveChangesAsync(ct);
+    }
+
     public async Task UpsertScrapedAsync(IEnumerable<Product> scraped, DateTime now, CancellationToken ct = default)
     {
         await using var db = await _dbFactory.CreateDbContextAsync(ct);
@@ -79,7 +107,7 @@ public class ProductRepository : IProductRepository
             .ToDictionary(g => g.Key, g => g.First());
 
         // Load existing rows in a few queries instead of one SELECT per product.
-        // Chunked to stay well below SQLite's parameter limit.
+        // Chunked to keep each query's SKU list a reasonable size.
         var existingByKey = new Dictionary<(Retailer, string), Product>();
         foreach (var retailerGroup in incomingByKey.Keys.GroupBy(k => k.Retailer))
         {

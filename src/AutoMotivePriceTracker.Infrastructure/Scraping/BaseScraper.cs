@@ -23,19 +23,80 @@ public abstract class BaseScraper : IProductScraper, IAsyncDisposable
 
     protected abstract Task<List<Product>> ScrapeCategoryPageAsync(IPage page, string categoryUrl, CancellationToken ct);
 
-    public async Task<IEnumerable<Product>> ScrapeAsync(CancellationToken ct = default)
+    /// <summary>Reads the feature bullets from an open product page (empty if it lists none).</summary>
+    protected abstract Task<IReadOnlyList<string>> ExtractFeaturesAsync(IPage page);
+
+    private async Task<IBrowserContext> OpenContextAsync()
     {
+        // ScrapeAsync and ScrapeFeaturesAsync may both run on one instance: release the earlier browser first.
+        await DisposeAsync();
+
         _playwright = await Playwright.CreateAsync();
         _browser = await _playwright.Chromium.LaunchAsync(new BrowserTypeLaunchOptions
         {
             Headless = true
         });
 
-        var context = await _browser.NewContextAsync(new BrowserNewContextOptions
+        return await _browser.NewContextAsync(new BrowserNewContextOptions
         {
             UserAgent = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
             ViewportSize = new ViewportSize { Width = 1280, Height = 800 }
         });
+    }
+
+    public async Task<IReadOnlyDictionary<string, IReadOnlyList<string>>> ScrapeFeaturesAsync(
+        IReadOnlyCollection<Product> products, CancellationToken ct = default)
+    {
+        var features = new Dictionary<string, IReadOnlyList<string>>();
+        if (products.Count == 0) return features;
+
+        var context = await OpenContextAsync();
+        var page = await context.NewPageAsync();
+
+        foreach (var product in products)
+        {
+            if (ct.IsCancellationRequested) break;
+
+            try
+            {
+                await NavigateWithRetryAsync(page, product.SourceUrl);
+                features[product.Sku] = await ExtractFeaturesAsync(page);
+
+                await Task.Delay(Random.Shared.Next(800, 1800), ct);
+            }
+            catch (OperationCanceledException) when (ct.IsCancellationRequested)
+            {
+                break;
+            }
+            catch (Exception ex)
+            {
+                // Left out of the result so the product is retried on the next run.
+                Logger.LogWarning(ex, "Failed to scrape features for {Retailer} product {Sku} ({Url})",
+                    Retailer, product.Sku, product.SourceUrl);
+            }
+        }
+
+        await context.CloseAsync();
+        return features;
+    }
+
+    // Collapses the whitespace/newlines the retailers' markup leaves inside <li> text.
+    protected static async Task<IReadOnlyList<string>> ListItemTextsAsync(IPage page, string selector)
+    {
+        var items = await page.QuerySelectorAllAsync(selector);
+        var texts = new List<string>();
+        foreach (var item in items)
+        {
+            var text = string.Join(' ',
+                ((await item.TextContentAsync()) ?? "").Split((char[]?)null, StringSplitOptions.RemoveEmptyEntries));
+            if (text.Length > 0) texts.Add(text);
+        }
+        return texts;
+    }
+
+    public async Task<IEnumerable<Product>> ScrapeAsync(CancellationToken ct = default)
+    {
+        var context = await OpenContextAsync();
 
         var allProducts = new List<Product>();
 
@@ -117,5 +178,7 @@ public abstract class BaseScraper : IProductScraper, IAsyncDisposable
     {
         if (_browser != null) await _browser.DisposeAsync();
         _playwright?.Dispose();
+        _browser = null;
+        _playwright = null;
     }
 }

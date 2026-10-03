@@ -19,10 +19,15 @@ public class SupercheapAutoScraper : BaseScraper
         $"{BaseUrl}/oils-fluids-filters/filters",
         $"{BaseUrl}/oils-fluids-filters/coolant",
         $"{BaseUrl}/oils-fluids-filters/fluids",
+        $"/oils-fluids-filters/additives?",
+        $"https://www.supercheapauto.co.nz/car-care-cleaning/cleaning",
+        $"https://www.supercheapauto.co.nz/car-care-cleaning/wax-polish-detailing",
+        $"/car-care-cleaning/wax-polish-detailing",
+		$"{BaseUrl}/tools-garage/tool-kit",
+		$"/tools-garage/hand-tools",
+        $"/tools-garage/garage-workshop",
         $"{BaseUrl}/batteries-electrical/batteries",
-        $"{BaseUrl}/spare-parts/wipers",
-        $"{BaseUrl}/spare-parts/ignition-start-charge",
-        $"{BaseUrl}/spare-parts/cooling",
+
     };
 
     private const string CardSelector = ".product-tile[data-itemid]";
@@ -61,6 +66,9 @@ public class SupercheapAutoScraper : BaseScraper
 
         return products;
     }
+
+    protected override Task<IReadOnlyList<string>> ExtractFeaturesAsync(IPage page) =>
+        ListItemTextsAsync(page, "#product-features li");
 
     private async Task<Product?> ExtractProductAsync(IElementHandle card, string categoryUrl)
     {

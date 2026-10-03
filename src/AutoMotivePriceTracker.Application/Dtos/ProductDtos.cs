@@ -36,13 +36,14 @@ public record ProductDetailDto(
     Retailer Retailer,
     DateTime LastChecked,
     PricePointDto? LatestPrice,
-    IReadOnlyList<PricePointDto> PriceHistory)
+    IReadOnlyList<PricePointDto> PriceHistory,
+    IReadOnlyList<string> Features)
 {
     internal static ProductDetailDto From(Product p)
     {
         var history = p.PriceHistory.OrderBy(r => r.Date).Select(PricePointDto.From).ToList();
         return new(p.Id, p.Name, p.Brand, p.Category, p.ImageUrl, p.SourceUrl, p.Retailer,
-            p.LastChecked, history.LastOrDefault(), history);
+            p.LastChecked, history.LastOrDefault(), history, p.Features);
     }
 }
 

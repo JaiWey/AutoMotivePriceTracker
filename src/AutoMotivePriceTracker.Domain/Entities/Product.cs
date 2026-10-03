@@ -14,11 +14,23 @@ public class Product
     public Retailer Retailer { get; set; }
     public DateTime LastChecked { get; set; }
 
+    /// <summary>Feature bullet points from the retailer's product page.</summary>
+    public List<string> Features { get; set; } = new();
+
+    /// <summary>When the product page was last read for features; null until it has been (even if it listed none).</summary>
+    public DateTime? FeaturesScrapedAt { get; set; }
+
     public ICollection<PriceRecord> PriceHistory { get; set; } = new List<PriceRecord>();
 
     public PriceRecord? LatestPrice => PriceHistory
         .OrderByDescending(p => p.Date)
         .FirstOrDefault();
+
+    public void SetFeatures(IEnumerable<string> features, DateTime now)
+    {
+        Features = features.Select(f => f.Trim()).Where(f => f.Length > 0).ToList();
+        FeaturesScrapedAt = now;
+    }
 
     /// <summary>Stamps a freshly scraped product (not yet persisted) with the scrape time.</summary>
     public void MarkAsNew(DateTime now)
