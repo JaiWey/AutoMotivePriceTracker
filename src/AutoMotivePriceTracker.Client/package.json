@@ -7,7 +7,7 @@
     "build": "ng build",
     "watch": "ng build --watch --configuration development",
     "test": "ng test",
-    "e2e": "docker compose -f ../../docker-compose.yml up -d --wait postgres && playwright test",
+    "e2e": "docker compose -f ../../docker-compose.yml up -d --wait postgres opensearch && playwright test",
     "serve:ssr:AutoMotivePriceTracker.Client": "node dist/AutoMotivePriceTracker.Client/server/server.mjs"
   },
   "private": true,

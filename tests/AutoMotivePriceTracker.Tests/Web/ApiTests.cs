@@ -9,6 +9,7 @@ using AutoMotivePriceTracker.Tests.Support;
 using AutoMotivePriceTracker.Web.BackgroundServices;
 using AutoMotivePriceTracker.Web.Endpoints;
 using AutoMotivePriceTracker.Web.Json;
+using AutoMotivePriceTracker.Web.Middleware;
 using Microsoft.AspNetCore.Builder;
 using Microsoft.AspNetCore.Hosting;
 using Microsoft.AspNetCore.TestHost;
@@ -263,5 +264,68 @@ public sealed class ApiEndpointsTests : IAsyncLifetime
             await Task.Delay(10);
         }
         Assert.Fail("Scrape never reached Succeeded");
+    }
+}
+
+public sealed class OriginVerificationTests : IAsyncLifetime
+{
+    private WebApplication _app = null!;
+    private HttpClient _client = null!;
+
+    public async Task InitializeAsync()
+    {
+        var builder = WebApplication.CreateBuilder();
+        builder.WebHost.UseTestServer();
+        _app = builder.Build();
+        _app.UseOriginVerification("s3cret");
+        _app.MapGet("/ping", () => "pong");
+        await _app.StartAsync();
+        _client = _app.GetTestClient();
+    }
+
+    public async Task DisposeAsync()
+    {
+        _client.Dispose();
+        await _app.DisposeAsync();
+    }
+
+    [Fact]
+    public async Task Rejects_requests_without_the_secret_header()
+    {
+        Assert.Equal(HttpStatusCode.Forbidden, (await _client.GetAsync("/ping")).StatusCode);
+    }
+
+    [Fact]
+    public async Task Rejects_requests_with_a_wrong_secret()
+    {
+        using var request = new HttpRequestMessage(HttpMethod.Get, "/ping");
+        request.Headers.Add(OriginVerificationMiddleware.HeaderName, "nope");
+
+        Assert.Equal(HttpStatusCode.Forbidden, (await _client.SendAsync(request)).StatusCode);
+    }
+
+    [Fact]
+    public async Task Serves_requests_with_the_right_secret()
+    {
+        using var request = new HttpRequestMessage(HttpMethod.Get, "/ping");
+        request.Headers.Add(OriginVerificationMiddleware.HeaderName, "s3cret");
+
+        var response = await _client.SendAsync(request);
+
+        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+        Assert.Equal("pong", await response.Content.ReadAsStringAsync());
+    }
+
+    [Fact]
+    public async Task Is_disabled_when_no_secret_is_configured()
+    {
+        var builder = WebApplication.CreateBuilder();
+        builder.WebHost.UseTestServer();
+        await using var app = builder.Build();
+        app.UseOriginVerification(null);
+        app.MapGet("/ping", () => "pong");
+        await app.StartAsync();
+
+        Assert.Equal(HttpStatusCode.OK, (await app.GetTestClient().GetAsync("/ping")).StatusCode);
     }
 }

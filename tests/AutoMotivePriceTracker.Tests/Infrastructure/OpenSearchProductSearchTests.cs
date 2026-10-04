@@ -2,52 +2,53 @@ using AutoMotivePriceTracker.Domain.Entities;
 using AutoMotivePriceTracker.Infrastructure.Search;
 using DotNet.Testcontainers.Builders;
 using DotNet.Testcontainers.Containers;
-using Elastic.Clients.Elasticsearch;
 using Microsoft.Extensions.Logging.Abstractions;
 using Microsoft.Extensions.Options;
+using OpenSearch.Client;
 using static AutoMotivePriceTracker.Tests.Support.Builders;
 
 namespace AutoMotivePriceTracker.Tests.Infrastructure;
 
-/// <summary>One single-node Elasticsearch (security off) for all search tests (needs Docker).</summary>
-public sealed class ElasticsearchFixture : IAsyncLifetime
+/// <summary>One single-node OpenSearch (security off) for all search tests (needs Docker).</summary>
+public sealed class OpenSearchFixture : IAsyncLifetime
 {
     private readonly IContainer _container = new ContainerBuilder()
-        .WithImage("docker.elastic.co/elasticsearch/elasticsearch:9.2.0")
+        .WithImage("opensearchproject/opensearch:2.19.1")
         .WithEnvironment("discovery.type", "single-node")
-        .WithEnvironment("xpack.security.enabled", "false")
-        .WithEnvironment("ES_JAVA_OPTS", "-Xms512m -Xmx512m")
+        .WithEnvironment("DISABLE_SECURITY_PLUGIN", "true")
+        .WithEnvironment("DISABLE_INSTALL_DEMO_CONFIG", "true")
+        .WithEnvironment("OPENSEARCH_JAVA_OPTS", "-Xms512m -Xmx512m")
         .WithPortBinding(9200, true)
         .WithWaitStrategy(Wait.ForUnixContainer()
             .UntilHttpRequestIsSucceeded(r => r.ForPort(9200).ForPath("/_cluster/health")))
         .Build();
 
-    public ElasticsearchClient Client { get; private set; } = null!;
+    public OpenSearchClient Client { get; private set; } = null!;
 
     public Task InitializeAsync() => StartAsync();
 
     private async Task StartAsync()
     {
         await _container.StartAsync();
-        Client = new ElasticsearchClient(new Uri($"http://{_container.Hostname}:{_container.GetMappedPublicPort(9200)}"));
+        Client = new OpenSearchClient(new ConnectionSettings(new Uri($"http://{_container.Hostname}:{_container.GetMappedPublicPort(9200)}")));
     }
 
     public Task DisposeAsync() => _container.DisposeAsync().AsTask();
 }
 
-public sealed class ElasticProductSearchTests : IClassFixture<ElasticsearchFixture>
+public sealed class OpenSearchProductSearchTests : IClassFixture<OpenSearchFixture>
 {
-    private readonly ElasticsearchFixture _es;
+    private readonly OpenSearchFixture _es;
 
-    public ElasticProductSearchTests(ElasticsearchFixture es) => _es = es;
+    public OpenSearchProductSearchTests(OpenSearchFixture es) => _es = es;
 
     /// <summary>A search over a fresh index (one per test) holding the given products with ids 1..n.</summary>
-    private async Task<ElasticProductSearch> SearchWith(params Product[] products)
+    private async Task<OpenSearchProductSearch> SearchWith(params Product[] products)
     {
         for (var i = 0; i < products.Length; i++) products[i].Id = i + 1;
 
-        var options = Options.Create(new ElasticsearchOptions { Index = $"products-{Guid.NewGuid():N}" });
-        var search = new ElasticProductSearch(_es.Client, options, NullLogger<ElasticProductSearch>.Instance);
+        var options = Options.Create(new SearchOptions { Index = $"products-{Guid.NewGuid():N}" });
+        var search = new OpenSearchProductSearch(_es.Client, options, NullLogger<OpenSearchProductSearch>.Instance);
         await search.IndexAsync(products);
         return search;
     }

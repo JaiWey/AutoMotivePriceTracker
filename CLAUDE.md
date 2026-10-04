@@ -5,8 +5,8 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 ## Commands
 
 ```bash
-# Start PostgreSQL and Elasticsearch (needed to run the app; dev connection string is in appsettings.Development.json,
-# search is Elasticsearch:Url, default http://localhost:9200; the first start pulls a ~1GB image)
+# Start PostgreSQL and OpenSearch (needed to run the app; dev connection string is in appsettings.Development.json,
+# search is Search:Url, default http://localhost:9200; the first start pulls a ~1GB image)
 docker compose up -d --wait
 
 # Build entire solution
@@ -17,17 +17,17 @@ dotnet run --project src/AutoMotivePriceTracker.Web
 
 # Run the Angular client (http://localhost:4200; talks to the API at environment.apiUrl)
 cd src/AutoMotivePriceTracker.Client && npm install && npx ng serve
-# Production build: npx ng build (set apiUrl in src/environments/environment.production.ts)
+# Production build: npx ng build (environment.production.ts has an empty apiUrl = API on the app's own origin; set an absolute URL if hosted elsewhere)
 # SSR: `ng build` also emits a Node server; run it with `npm run serve:ssr:AutoMotivePriceTracker.Client` (port 4000, PORT env).
-# In production set NG_ALLOWED_HOSTS=<public host>[,..] (angular.json only allows localhost) and make apiUrl reachable from the Node process.
+# In production set NG_ALLOWED_HOSTS=<public host>[,..] (angular.json only allows localhost); behind a proxy also TRUST_PROXY_HEADERS=true (see "Same-origin API URL" below).
 
 # Run tests. .NET: xUnit in tests/AutoMotivePriceTracker.Tests (domain, services, repository on a
-# real PostgreSQL via Testcontainers with the real migrations and the search adapter on a real Elasticsearch container (both need Docker), API endpoints via TestServer). Add -c Release if a
+# real PostgreSQL via Testcontainers with the real migrations and the search adapter on a real OpenSearch container (both need Docker), API endpoints via TestServer). Add -c Release if a
 # running app locks the Debug build. Angular: Vitest via the Angular CLI.
 dotnet test
 cd src/AutoMotivePriceTracker.Client && npx ng test --no-watch
 # End-to-end (Playwright, installed Edge): starts its own API on :5099 (database `autoprice_e2e` on the
-# compose PostgreSQL, seeded by e2e/seed.ts and then indexed into the `products_e2e` index of the compose Elasticsearch, Scraping:Enabled=false) and `ng serve --configuration e2e` on :4299, then drives the UI.
+# compose PostgreSQL, seeded by e2e/seed.ts and then indexed into the `products_e2e` index of the compose OpenSearch, Scraping:Enabled=false) and `ng serve --configuration e2e` on :4299, then drives the UI.
 npm run e2e
 
 # Add a new EF Core migration (run from solution root)
@@ -55,7 +55,7 @@ Clean Architecture, four .NET projects plus an Angular client under `src/`. Depe
 
 - **Domain** — entities (`Product`, `PriceRecord`) and the `Retailer` enum. No dependencies. Holds business rules, e.g. `Product.ApplyScrape` (price deduplication).
 - **Application** — use cases and the ports they need. `IProductScraper`, `IProductRepository` and `IProductSearch` (abstractions implemented by Infrastructure), DTOs (`ProductSummaryDto`, `ProductDetailDto`, `PricePointDto`, `HomeSummaryDto`), and services `IProductCatalogService` (queries for the UI), `IPriceScrapingService` (runs all scrapers and persists results) and `ISearchIndexService` (rebuilds the search index from the database). Registered via `AddApplication()`.
-- **Infrastructure** — EF Core/PostgreSQL via Npgsql (`Persistence/AppDbContext`, `ProductRepository`, `Persistence/Migrations`), the Elasticsearch search adapter (`Search/ElasticProductSearch`) and Playwright scrapers (`Scraping/BaseScraper`, `Scraping/Scrapers/*`). Registered via `AddInfrastructure(connectionString, elasticsearchOptions)`; `InitializeDatabaseAsync()` applies migrations.
+- **Infrastructure** — EF Core/PostgreSQL via Npgsql (`Persistence/AppDbContext`, `ProductRepository`, `Persistence/Migrations`), the OpenSearch search adapter (`Search/OpenSearchProductSearch`) and Playwright scrapers (`Scraping/BaseScraper`, `Scraping/Scrapers/*`). Registered via `AddInfrastructure(connectionString, searchOptions)`; `InitializeDatabaseAsync()` applies migrations.
 - **Web** — JSON minimal API (`Endpoints/ApiEndpoints.cs`), `ScraperBackgroundService` (full scrape 10s after startup, then every 24h), `ScrapeRunCoordinator` and the composition root in `Program.cs`. Endpoints depend only on Application services/DTOs, never on EF or `AppDbContext`.
 - **AutoMotivePriceTracker.Client** — Angular (standalone components, signals) SPA with server-side rendering (`@angular/ssr`, Express in `src/server.ts`; hydration + `withFetch()`), deployed separately from the API as a Node app. `app.routes.server.ts`: all routes render per request (`RenderMode.Server`) except `admin`, which is client-only (it polls with timers). Server-side API calls come from the Node process, so `environment.apiUrl` must be reachable from it. Pages: Home, Products (client-side filtering), Product detail (Chart.js via ng2-charts), Admin (triggers/polls scrapes). The API base URL comes from `src/environments/`.
 
@@ -71,13 +71,14 @@ Clean Architecture, four .NET projects plus an Angular client under `src/`. Depe
 - **Price deduplication** — lives in the domain (`Product.ApplyScrape`): a new `PriceRecord` is only added when price or `WasPrice` changed. `ProductRepository.UpsertScrapedAsync` matches by SKU + retailer. It is batched: it dedupes the incoming list per (retailer, SKU), loads existing products in chunked queries (not one `SELECT` per product), then saves new and updated rows in a single `SaveChangesAsync`.
 - **JSON API contract** — enums serialize as strings (`JsonStringEnumConverter`) and `DateTime`s always as UTC with a `Z` suffix (`Json/UtcDateTimeConverter`, a safeguard so a DateTime of Unspecified kind is never serialized without its zone). CORS origins come from `Cors:AllowedOrigins` (default `http://localhost:4200`). Endpoints: `GET /api/home`, `GET /api/products`, `GET /api/products/search?q=` (ranked product ids), `GET /api/products/{id}`, `POST /api/admin/scrape` (202, or 409 if running), `GET /api/admin/scrape/status`, `POST /api/admin/reindex` (rebuilds the search index, returns `{indexed}`).
 - **Logging** — Serilog behind `ILogger<T>` (`builder.Host.UseSerilog` in `Program.cs`, request logging via `UseSerilogRequestLogging`). Levels and sinks live in the `Serilog` section of `appsettings.json` (console + daily rolling file `logs/app-.log`, 14 files kept; `*.log` is gitignored). Application/Infrastructure keep depending only on `Microsoft.Extensions.Logging`.
-- **Config switches** — `ConnectionStrings:Default` (required; dev default in `appsettings.Development.json`, set it via config/env elsewhere) and `Scraping:Enabled=false` removes all scrapers and the scheduled run (used by the e2e stack), `Elasticsearch:Url` (default `http://localhost:9200`), `Elasticsearch:Index` (default `products`; use a different one per environment sharing a cluster) and optional `Elasticsearch:ApiKey`.
+- **Config switches** — `ConnectionStrings:Default` (required; dev default in `appsettings.Development.json`, set it via config/env elsewhere) and `Scraping:Enabled=false` removes all scrapers and the scheduled run (used by the e2e stack), `Search:Url` (default `http://localhost:9200`), `Search:Index` (default `products`; use a different one per environment sharing a cluster), optional `Search:Username`/`Search:Password` and `Origin:SharedSecret` (when set, only requests carrying it in `X-Origin-Verify` are served; CloudFront adds it in AWS).
 - **Scrape coordination** — `ScrapeRunCoordinator` (singleton) ensures manual and scheduled scrapes never overlap and holds the last run's status. `PriceScrapingService.RunAllAsync` swallows per-scraper errors, so `Succeeded` doesn't guarantee every scraper worked.
 - **Database** — PostgreSQL (`docker-compose.yml`, service `postgres`, db `autoprice`). Migrations run on startup and create the database if missing. To reset: `docker compose down -v` (drops the volume) and restart the app. Timestamps are `timestamptz` and Npgsql requires UTC `DateTime`s — always use `DateTime.UtcNow`. Prices are `numeric(18,2)`.
 - **One-off SQLite import** — `dotnet run --project tools/AutoMotivePriceTracker.SqliteImport -- <prices.db> <connection-string>` copies the legacy SQLite data (ids preserved) into an empty, migrated PostgreSQL database; it refuses a non-empty target.
 - **Migrations** — live in `Infrastructure/Persistence/Migrations` (baseline: `InitialCreate`). `dotnet ef` needs `Microsoft.EntityFrameworkCore.Design` in the startup project, so Web references it with `PrivateAssets=all`.
 - **DTOs at the boundary** — the repository returns domain entities; Application services map them to DTOs (`ProductSummaryDto` etc.), which are what the API returns and the Angular client mirrors (`src/app/models/models.ts`). Product list filtering (category, retailer, on-sale) stays in the Angular client over the `ProductSummaryDto` list; the free-text box calls `/api/products/search` (debounced) and falls back to a substring match if that fails.
-- **Product search** — Elasticsearch holds one document per product (id = product id; name, brand, category, features, retailer) in an `english`-analyzed index that is created on first use. `ElasticProductSearch` requires every query word to match (`multi_match`, `fuzziness: AUTO`, name boosted over brand over category/features), so word order, plurals and typos don't matter. The index is derived data, rebuildable at any time: `SearchIndexService.ReindexAllAsync` bulk-upserts every product, run in the background at startup, after every scrape run (failures are logged, never fail the scrape) and via `POST /api/admin/reindex`. A mapping change needs the index deleted first (`curl -X DELETE localhost:9200/products`), then a reindex. If Elasticsearch is down, `/api/products/search` returns 500 and the client falls back to substring filtering.
+- **Product search** — OpenSearch (API-compatible with Elasticsearch; the Elastic .NET client cannot talk to it, so the app uses `OpenSearch.Client`) holds one document per product (id = product id; name, brand, category, features, retailer) in an `english`-analyzed index that is created on first use. `OpenSearchProductSearch` requires every query word to match (`multi_match`, `fuzziness: AUTO`, name boosted over brand over category/features), so word order, plurals and typos don't matter. The index is derived data, rebuildable at any time: `SearchIndexService.ReindexAllAsync` bulk-upserts every product, run in the background at startup, after every scrape run (failures are logged, never fail the scrape) and via `POST /api/admin/reindex`. A mapping change needs the index deleted first (`curl -X DELETE localhost:9200/products`), then a reindex. If the search service is down, `/api/products/search` returns 500 and the client falls back to substring filtering.
+- **Same-origin API URL** — `environment.production.ts` has an empty `apiUrl`: the API is on the app's origin (no CORS). The browser uses `/api/...`; during SSR `resolveApiOrigin` (`services/api.ts`) derives the origin from the incoming request. Behind a proxy the SSR server only honours `X-Forwarded-Host`/`-Proto` when `TRUST_PROXY_HEADERS=true` (`src/server.ts`), and still validates hosts against `NG_ALLOWED_HOSTS`.
 - **Dev gotcha** — a running `dotnet run` locks `Web/bin/Debug`; stop it before rebuilding, or build with `--configuration Release`.
 
 ### Adding a new retailer
@@ -85,3 +86,18 @@ Clean Architecture, four .NET projects plus an Angular client under `src/`. Depe
 1. Create `src/AutoMotivePriceTracker.Infrastructure/Scraping/Scrapers/YourScraper.cs` extending `BaseScraper`
 2. Add `Retailer.YourRetailer` to the enum in `Domain/Enums/Retailer.cs`
 3. Register in `Infrastructure/DependencyInjection.cs`: `services.AddScoped<IProductScraper, YourScraper>()`
+
+## Deployment (AWS, Terraform)
+
+Layout (`infra/terraform`, `deploy/`): one CloudFront distribution is the only public entry. `/api/*` goes through a VPC origin to the API on a private EC2 host (Docker, Playwright/Chromium scrapers, scheduled scraping, so run exactly one); static Angular files come from S3; everything else is the Angular SSR server as a Lambda container image (Lambda Web Adapter, Function URL with IAM auth + origin access control). PostgreSQL is RDS and search is an Amazon OpenSearch Service domain, both in private subnets of a VPC with one NAT gateway (about US$33/month, the main non-free-tier cost). Secrets are SSM SecureStrings; the host has no SSH, use `aws ssm start-session --target <api_instance_id>`.
+
+```powershell
+# prerequisites: aws configure, Docker, terraform; optional budget alert: -var budget_email=... in infra/terraform/terraform.tfvars
+pwsh deploy/deploy.ps1            # ECR repos -> build + push images -> terraform apply -> S3 sync, Lambda update, host deploy via SSM, CloudFront invalidation
+terraform -chdir=infra/terraform destroy   # tear everything down
+```
+
+- Images: `src/AutoMotivePriceTracker.Web/Dockerfile` (build from the repo root; installs Chromium for the non-root `app` user) and `src/AutoMotivePriceTracker.Client/Dockerfile` (Lambda image; also runs as a plain container).
+- The first deploy applies the ECR repositories before anything else because the Lambda needs its image to exist. `terraform apply` and `deploy.ps1` ask for confirmation; nothing is applied automatically.
+- Terraform state is local and holds the generated database and origin secrets; it is git-ignored. Move it to an encrypted S3 backend if more people deploy.
+- No custom domain yet (CloudFront `*.cloudfront.net` certificate). Free tier: 12-month EC2/RDS/OpenSearch allowances apply to accounts that have the legacy free tier; a t3.micro (1 GB) host is tight for Chromium, raise `api_instance_type` if scrapes run out of memory. Repco may block datacenter IPs.

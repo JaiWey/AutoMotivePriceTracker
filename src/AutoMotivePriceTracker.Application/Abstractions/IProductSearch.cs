@@ -2,7 +2,7 @@ using AutoMotivePriceTracker.Domain.Entities;
 
 namespace AutoMotivePriceTracker.Application.Abstractions;
 
-/// <summary>Full-text product search, implemented over a separate search index (Elasticsearch).</summary>
+/// <summary>Full-text product search, implemented over a separate search index (OpenSearch).</summary>
 public interface IProductSearch
 {
     /// <summary>

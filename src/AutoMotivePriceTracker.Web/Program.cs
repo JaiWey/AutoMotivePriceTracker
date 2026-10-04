@@ -6,6 +6,7 @@ using AutoMotivePriceTracker.Infrastructure.Search;
 using AutoMotivePriceTracker.Web.BackgroundServices;
 using AutoMotivePriceTracker.Web.Endpoints;
 using AutoMotivePriceTracker.Web.Json;
+using AutoMotivePriceTracker.Web.Middleware;
 using Microsoft.Extensions.DependencyInjection.Extensions;
 using Serilog;
 
@@ -22,9 +23,8 @@ builder.Host.UseSerilog((context, services, logger) => logger
 var connectionString = builder.Configuration.GetConnectionString("Default")
                        ?? throw new InvalidOperationException("ConnectionStrings:Default is not configured.");
 builder.Services.AddApplication();
-var elasticsearch = builder.Configuration.GetSection(ElasticsearchOptions.SectionName).Get<ElasticsearchOptions>()
-                    ?? new ElasticsearchOptions();
-builder.Services.AddInfrastructure(connectionString, elasticsearch);
+var search = builder.Configuration.GetSection(SearchOptions.SectionName).Get<SearchOptions>() ?? new SearchOptions();
+builder.Services.AddInfrastructure(connectionString, search);
 
 // Scraping can be switched off (e.g. for end-to-end tests): no scrapers, no scheduled run.
 var scrapingEnabled = builder.Configuration.GetValue("Scraping:Enabled", true);
@@ -50,7 +50,7 @@ var app = builder.Build();
 // Apply migrations on startup
 await app.Services.InitializeDatabaseAsync();
 
-// Build the search index in the background so startup never waits for (or fails on) Elasticsearch.
+// Build the search index in the background so startup never waits for (or fails on) the search service.
 // Search works as soon as it finishes; a failure is logged and the next scrape or reindex retries it.
 app.Lifetime.ApplicationStarted.Register(() => _ = Task.Run(async () =>
 {
@@ -66,6 +66,7 @@ app.Lifetime.ApplicationStarted.Register(() => _ = Task.Run(async () =>
     }
 }));
 
+app.UseOriginVerification(builder.Configuration["Origin:SharedSecret"]);
 app.UseSerilogRequestLogging();
 app.UseCors(CorsPolicy);
 app.MapApi();

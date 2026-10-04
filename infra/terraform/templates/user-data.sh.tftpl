@@ -1,0 +1,28 @@
+#!/bin/bash
+# First-boot setup for the API host (Amazon Linux 2023). Runs once as root.
+set -euxo pipefail
+
+# Swap: Chromium spikes memory during scrapes and a free-tier instance only has 1 GB
+if [ ! -f /swapfile ]; then
+  fallocate -l 2G /swapfile
+  chmod 600 /swapfile
+  mkswap /swapfile
+  swapon /swapfile
+  echo '/swapfile none swap sw 0 0' >> /etc/fstab
+fi
+
+dnf install -y docker
+systemctl enable --now docker
+
+# Compose v2 plugin (not packaged for AL2023)
+mkdir -p /usr/local/lib/docker/cli-plugins
+curl -fsSL https://github.com/docker/compose/releases/download/v2.40.3/docker-compose-linux-x86_64 \
+  -o /usr/local/lib/docker/cli-plugins/docker-compose
+chmod +x /usr/local/lib/docker/cli-plugins/docker-compose
+
+# Deploy script, run later through SSM by deploy/deploy.ps1
+mkdir -p /opt/app
+cat > /opt/app/deploy.sh <<'DEPLOY_EOF'
+${deploy_script}
+DEPLOY_EOF
+chmod 700 /opt/app/deploy.sh

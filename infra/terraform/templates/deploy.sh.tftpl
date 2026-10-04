@@ -1,0 +1,25 @@
+#!/bin/bash
+# Pulls the latest API image and restarts it. Invoked through SSM by deploy/deploy.ps1; safe to run repeatedly.
+set -euo pipefail
+cd /opt/app
+
+aws s3 cp "s3://${bucket}/docker-compose.api.yml" docker-compose.yml --region ${region}
+
+param() {
+  aws ssm get-parameter --name "$1" --with-decryption --query Parameter.Value --output text --region ${region}
+}
+
+umask 077
+cat > .env <<ENV
+API_IMAGE=${api_image}
+ConnectionStrings__Default=$(param ${db_param})
+Origin__SharedSecret=$(param ${origin_param})
+Search__Url=${search_url}
+Search__Index=products
+Scraping__Enabled=true
+ENV
+
+aws ecr get-login-password --region ${region} | docker login --username AWS --password-stdin ${registry}
+docker compose pull
+docker compose up -d --remove-orphans
+docker image prune -f

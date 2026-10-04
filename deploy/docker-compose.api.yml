@@ -1,0 +1,16 @@
+# Runs on the EC2 host (copied to /opt/app by deploy.sh; .env is generated there from SSM + Terraform values).
+# CloudFront reaches the API on host port 8080 through a VPC origin.
+services:
+  api:
+    image: ${API_IMAGE}
+    restart: unless-stopped
+    env_file: .env
+    ports:
+      - "8080:8080"
+    shm_size: 256m # Chromium needs more than Docker's 64 MB default /dev/shm
+    mem_limit: 750m # leaves room for the OS on a 1 GB instance (swap is added by user-data)
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"

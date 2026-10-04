@@ -10,7 +10,11 @@ import { join } from 'node:path';
 const browserDistFolder = join(import.meta.dirname, '../browser');
 
 const app = express();
-const angularApp = new AngularNodeAppEngine();
+// Behind CloudFront (AWS deployment) the public host and scheme arrive in X-Forwarded-Host/-Proto, set by a
+// CloudFront function. Angular ignores them unless trusted, and trusting them is only safe when the server is
+// reachable solely through that proxy, so it is opt-in. Hosts are still validated against NG_ALLOWED_HOSTS.
+const trustProxyHeaders = process.env['TRUST_PROXY_HEADERS'] === 'true' ? ['x-forwarded-host', 'x-forwarded-proto'] : false;
+const angularApp = new AngularNodeAppEngine({ trustProxyHeaders });
 
 /**
  * Example Express Rest API endpoints can be defined here.

@@ -1,0 +1,15 @@
+**/bin/
+**/obj/
+**/node_modules/
+**/dist/
+**/.angular/
+**/test-results/
+**/playwright-report/
+**/logs/
+.git/
+.vs/
+.idea/
+.claude/
+infra/
+tests/
+*.md

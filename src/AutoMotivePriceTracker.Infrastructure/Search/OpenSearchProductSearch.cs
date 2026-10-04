@@ -1,31 +1,30 @@
 using System.Globalization;
 using AutoMotivePriceTracker.Application.Abstractions;
 using AutoMotivePriceTracker.Domain.Entities;
-using Elastic.Clients.Elasticsearch;
-using Elastic.Clients.Elasticsearch.QueryDsl;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Options;
+using OpenSearch.Client;
 
 namespace AutoMotivePriceTracker.Infrastructure.Search;
 
 /// <summary>
-/// Product search over one Elasticsearch index (document id = product id). The index is derived data:
+/// Product search over one OpenSearch index (document id = product id). The index is derived data:
 /// it is created on first use and can be rebuilt at any time from the database.
 /// </summary>
-public sealed class ElasticProductSearch : IProductSearch
+public sealed class OpenSearchProductSearch : IProductSearch
 {
     private const int BulkSize = 1000;
     private const int MaxTerms = 8;
     private const string Analyzer = "english"; // stems "filters" -> "filter"
 
-    private readonly ElasticsearchClient _client;
+    private readonly IOpenSearchClient _client;
     private readonly string _index;
-    private readonly ILogger<ElasticProductSearch> _logger;
+    private readonly ILogger<OpenSearchProductSearch> _logger;
     private readonly SemaphoreSlim _ensureLock = new(1, 1);
     private bool _indexReady;
 
-    public ElasticProductSearch(ElasticsearchClient client, IOptions<ElasticsearchOptions> options,
-        ILogger<ElasticProductSearch> logger)
+    public OpenSearchProductSearch(IOpenSearchClient client, IOptions<SearchOptions> options,
+        ILogger<OpenSearchProductSearch> logger)
     {
         _client = client;
         _index = options.Value.Index;
@@ -41,25 +40,26 @@ public sealed class ElasticProductSearch : IProductSearch
 
         // Every word must match somewhere (AND across words); within a word, typos up to AUTO edits are
         // tolerated and name hits outweigh brand, category and feature hits.
-        var must = terms.Select(term => (Query)new MultiMatchQuery
-        {
-            Query = term,
-            Fields = new[] { "name^3", "brand^2", "category", "features" },
-            Fuzziness = new Fuzziness("AUTO"),
-            PrefixLength = 1,
-        }).ToList();
+        var must = terms
+            .Select(term => (Func<QueryContainerDescriptor<ProductDocument>, QueryContainer>)(q => q
+                .MultiMatch(m => m
+                    .Query(term)
+                    .Fields(f => f.Field("name", 3).Field("brand", 2).Field("category").Field("features"))
+                    .Fuzziness(Fuzziness.Auto)
+                    .PrefixLength(1))))
+            .ToArray();
 
         var response = await _client.SearchAsync<ProductDocument>(s => s
-            .Indices(_index)
+            .Index(_index)
             .Size(take)
             .Source(false)
-            .Query(new BoolQuery { Must = must }), ct);
+            .Query(q => q.Bool(b => b.Must(must))), ct);
 
-        if (!response.IsValidResponse)
-            throw new InvalidOperationException($"Elasticsearch search failed: {response.DebugInformation}");
+        if (!response.IsValid)
+            throw new InvalidOperationException($"OpenSearch search failed: {response.DebugInformation}");
 
         return response.Hits
-            .Select(h => int.Parse(h.Id!, CultureInfo.InvariantCulture))
+            .Select(h => int.Parse(h.Id, CultureInfo.InvariantCulture))
             .ToList();
     }
 
@@ -73,12 +73,12 @@ public sealed class ElasticProductSearch : IProductSearch
                 .Index(_index)
                 .IndexMany(chunk, (op, doc) => op.Id(doc.Id)), ct);
 
-            if (!response.IsValidResponse || response.Errors)
-                throw new InvalidOperationException($"Elasticsearch bulk index failed: {response.DebugInformation}");
+            if (!response.IsValid || response.Errors)
+                throw new InvalidOperationException($"OpenSearch bulk index failed: {response.DebugInformation}");
         }
 
         // Make the new documents searchable now rather than after the next periodic refresh.
-        await _client.Indices.RefreshAsync(_index, ct);
+        await _client.Indices.RefreshAsync(_index, ct: ct);
     }
 
     private async Task EnsureIndexAsync(CancellationToken ct)
@@ -90,22 +90,22 @@ public sealed class ElasticProductSearch : IProductSearch
         {
             if (_indexReady) return;
 
-            var exists = await _client.Indices.ExistsAsync(_index, ct);
+            var exists = await _client.Indices.ExistsAsync(_index, ct: ct);
             if (!exists.Exists)
             {
                 var created = await _client.Indices.CreateAsync(_index, c => c
-                    .Mappings(m => m.Properties<ProductDocument>(p => p
-                        .Text(d => d.Name, t => t.Analyzer(Analyzer))
-                        .Text(d => d.Brand, t => t.Analyzer(Analyzer))
-                        .Text(d => d.Category, t => t.Analyzer(Analyzer))
-                        .Text(d => d.Features, t => t.Analyzer(Analyzer))
-                        .Keyword(d => d.Retailer))), ct);
+                    .Map<ProductDocument>(m => m.Properties(p => p
+                        .Text(t => t.Name(d => d.Name).Analyzer(Analyzer))
+                        .Text(t => t.Name(d => d.Brand).Analyzer(Analyzer))
+                        .Text(t => t.Name(d => d.Category).Analyzer(Analyzer))
+                        .Text(t => t.Name(d => d.Features).Analyzer(Analyzer))
+                        .Keyword(k => k.Name(d => d.Retailer)))), ct);
 
                 // Another instance may have created it first; that is fine.
-                if (!created.IsValidResponse && created.ElasticsearchServerError?.Error.Type != "resource_already_exists_exception")
+                if (!created.IsValid && created.ServerError?.Error.Type != "resource_already_exists_exception")
                     throw new InvalidOperationException($"Could not create index '{_index}': {created.DebugInformation}");
 
-                _logger.LogInformation("Created Elasticsearch index {Index}", _index);
+                _logger.LogInformation("Created OpenSearch index {Index}", _index);
             }
 
             _indexReady = true;
@@ -117,7 +117,7 @@ public sealed class ElasticProductSearch : IProductSearch
     }
 
     /// <summary>The searchable shape of a product; the document id is the product id.</summary>
-    private sealed class ProductDocument
+    public sealed class ProductDocument
     {
         public int Id { get; set; }
         public string Name { get; set; } = string.Empty;

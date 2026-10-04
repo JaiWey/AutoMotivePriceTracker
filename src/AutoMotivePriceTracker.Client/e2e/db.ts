@@ -1,6 +1,6 @@
-// Search runs against the docker-compose Elasticsearch, in its own index so dev data is untouched.
-export const esIndex = process.env['E2E_ES_INDEX'] ?? 'products_e2e';
-export const esUrl = process.env['E2E_ES_URL'] ?? 'http://localhost:9200';
+// Search runs against the docker-compose OpenSearch, in its own index so dev data is untouched.
+export const searchIndex = process.env['E2E_SEARCH_INDEX'] ?? 'products_e2e';
+export const searchUrl = process.env['E2E_SEARCH_URL'] ?? 'http://localhost:9200';
 export const apiUrl = 'http://localhost:5099';
 
 // A separate database on the docker-compose PostgreSQL server (`docker compose up -d --wait`).

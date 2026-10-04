@@ -2,7 +2,7 @@ import { provideHttpClient } from '@angular/common/http';
 import { HttpTestingController, provideHttpClientTesting } from '@angular/common/http/testing';
 import { TestBed } from '@angular/core/testing';
 import { environment } from '../../environments/environment';
-import { Api } from './api';
+import { Api, resolveApiOrigin } from './api';
 
 describe('Api', () => {
   let api: Api;
@@ -40,5 +40,19 @@ describe('Api', () => {
   it('polls scrape status', () => {
     api.scrapeStatus().subscribe();
     expect(http.expectOne(`${base}/admin/scrape/status`).request.method).toBe('GET');
+  });
+});
+
+describe('resolveApiOrigin', () => {
+  it('prefers a configured API url', () => {
+    expect(resolveApiOrigin('http://localhost:5052', { url: 'https://app.test/x' })).toBe('http://localhost:5052');
+  });
+
+  it('uses the incoming request origin during server-side rendering when nothing is configured', () => {
+    expect(resolveApiOrigin('', { url: 'https://d111.cloudfront.net/products?q=oil' })).toBe('https://d111.cloudfront.net');
+  });
+
+  it('uses relative URLs in the browser when nothing is configured', () => {
+    expect(resolveApiOrigin('', null)).toBe('');
   });
 });

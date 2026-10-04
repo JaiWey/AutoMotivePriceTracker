@@ -1,4 +1,4 @@
-# Local PostgreSQL and Elasticsearch for development and e2e tests.
+# Local PostgreSQL and OpenSearch for development and e2e tests.
 #   docker compose up -d --wait
 # Matches ConnectionStrings:Default in src/AutoMotivePriceTracker.Web/appsettings.Development.json.
 services:
@@ -19,18 +19,20 @@ services:
       timeout: 3s
       retries: 30
 
-  # Single-node, security off: development only. Matches Elasticsearch:Url (default http://localhost:9200).
-  elasticsearch:
-    image: docker.elastic.co/elasticsearch/elasticsearch:9.2.0
-    container_name: autoprice-elasticsearch
+  # OpenSearch (API-compatible with the Elasticsearch features we use; same engine as Amazon OpenSearch Service).
+  # Single-node, security off: development only. Matches Search:Url (default http://localhost:9200).
+  opensearch:
+    image: opensearchproject/opensearch:2.19.1
+    container_name: autoprice-opensearch
     environment:
       discovery.type: single-node
-      xpack.security.enabled: "false"
-      ES_JAVA_OPTS: "-Xms512m -Xmx512m"
+      DISABLE_SECURITY_PLUGIN: "true"
+      DISABLE_INSTALL_DEMO_CONFIG: "true"
+      OPENSEARCH_JAVA_OPTS: "-Xms512m -Xmx512m"
     ports:
       - "9200:9200"
     volumes:
-      - autoprice-esdata:/usr/share/elasticsearch/data
+      - autoprice-osdata:/usr/share/opensearch/data
     healthcheck:
       test: ["CMD-SHELL", "curl -fs http://localhost:9200/_cluster/health || exit 1"]
       interval: 5s
@@ -39,4 +41,4 @@ services:
 
 volumes:
   autoprice-pgdata:
-  autoprice-esdata:
+  autoprice-osdata:

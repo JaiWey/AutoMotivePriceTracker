@@ -1,13 +1,23 @@
 import { HttpClient } from '@angular/common/http';
-import { Injectable, inject } from '@angular/core';
+import { Injectable, REQUEST, inject } from '@angular/core';
 import { Observable } from 'rxjs';
 import { environment } from '../../environments/environment';
 import { HomeSummary, ProductDetail, ProductSummary, ScrapeStatus } from '../models/models';
 
+/**
+ * Origin the API is reached at. A configured `apiUrl` wins (local dev, e2e). When it is empty the API is
+ * served from the same origin as the app (production behind one CDN): the browser then uses relative URLs,
+ * and server-side rendering resolves them against the incoming request's origin.
+ */
+export function resolveApiOrigin(configured: string, request: { url: string } | null): string {
+  if (configured) return configured;
+  return request ? new URL(request.url).origin : '';
+}
+
 @Injectable({ providedIn: 'root' })
 export class Api {
   private readonly http = inject(HttpClient);
-  private readonly base = `${environment.apiUrl}/api`;
+  private readonly base = `${resolveApiOrigin(environment.apiUrl, inject(REQUEST, { optional: true }))}/api`;
 
   home(): Observable<HomeSummary> {
     return this.http.get<HomeSummary>(`${this.base}/home`);
