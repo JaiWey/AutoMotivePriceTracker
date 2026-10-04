@@ -49,10 +49,16 @@ test.describe('Products', () => {
   const names = (page: Page) => page.locator('.product-name');
 
   test('searches by name or brand, case-insensitively', async ({ page }) => {
-    await page.getByPlaceholder('Search name or brand...').fill('BENDIX');
+    await page.getByPlaceholder('Search name, brand or features...').fill('BENDIX');
 
     await expect(page.locator('.result-count')).toHaveText('1 products');
     await expect(names(page)).toHaveText(['Bendix Brake Pads Front']);
+  });
+
+  test('finds products with words in any order and tolerates typos', async ({ page }) => {
+    await page.getByPlaceholder('Search name, brand or features...').fill('oil fliters');
+
+    await expect(names(page)).toHaveText(['Ryco Oil Filter Z145A']);
   });
 
   test('filters by category', async ({ page }) => {
@@ -82,7 +88,7 @@ test.describe('Products', () => {
   });
 
   test('shows an empty state when nothing matches', async ({ page }) => {
-    await page.getByPlaceholder('Search name or brand...').fill('no such product');
+    await page.getByPlaceholder('Search name, brand or features...').fill('no such product');
 
     await expect(page.getByText('No products match your filters.')).toBeVisible();
   });

@@ -10,7 +10,8 @@ namespace AutoMotivePriceTracker.Tests.Application;
 public class ProductCatalogServiceTests
 {
     private readonly FakeProductRepository _repo = new();
-    private ProductCatalogService Service => new(_repo);
+    private readonly FakeProductSearch _search = new();
+    private ProductCatalogService Service => new(_repo, _search);
 
     [Fact]
     public async Task Home_summary_maps_sections_and_totals_counts()
@@ -76,9 +77,29 @@ public class ProductCatalogServiceTests
 public class PriceScrapingServiceTests
 {
     private readonly FakeProductRepository _repo = new();
+    private readonly FakeSearchIndexService _index = new();
 
     private PriceScrapingService Create(params FakeScraper[] scrapers) =>
-        new(scrapers, _repo, NullLogger<PriceScrapingService>.Instance);
+        new(scrapers, _repo, _index, NullLogger<PriceScrapingService>.Instance);
+
+    [Fact]
+    public async Task Reindexes_search_once_after_all_scrapers_ran()
+    {
+        await Create(new FakeScraper { Products = [Product("A")] },
+            new FakeScraper { Retailer = Retailer.SupercheapAuto, Products = [Product("B", Retailer.SupercheapAuto)] }).RunAllAsync();
+
+        Assert.Equal(1, _index.Reindexes);
+    }
+
+    [Fact]
+    public async Task A_failing_search_reindex_does_not_fail_the_scrape()
+    {
+        _index.Throws = new InvalidOperationException("elasticsearch down");
+
+        await Create(new FakeScraper { Products = [Product("A")] }).RunAllAsync();
+
+        Assert.Single(_repo.Upserts);
+    }
 
     [Fact]
     public async Task Persists_each_scrapers_results()
@@ -174,5 +195,44 @@ public class PriceScrapingServiceTests
 
         var now = Assert.Single(_repo.Upserts).Now;
         Assert.InRange(now, before, DateTime.UtcNow);
+    }
+}
+
+public class ProductSearchServiceTests
+{
+    private readonly FakeProductRepository _repo = new();
+    private readonly FakeProductSearch _search = new();
+
+    [Theory]
+    [InlineData("")]
+    [InlineData("   ")]
+    public async Task Blank_query_returns_nothing_without_calling_the_index(string query)
+    {
+        var ids = await new ProductCatalogService(_repo, _search).SearchProductIdsAsync(query);
+
+        Assert.Empty(ids);
+        Assert.Equal(0, _search.SearchCalls);
+    }
+
+    [Fact]
+    public async Task Search_trims_the_query_and_returns_the_index_order()
+    {
+        _search.Result = [7, 3, 5];
+
+        var ids = await new ProductCatalogService(_repo, _search).SearchProductIdsAsync("  engine oil  ");
+
+        Assert.Equal([7, 3, 5], ids);
+        Assert.Equal("engine oil", _search.LastQuery);
+    }
+
+    [Fact]
+    public async Task Reindex_sends_every_product_to_the_index()
+    {
+        _repo.All = [Product("A"), Product("B")];
+
+        var count = await new SearchIndexService(_repo, _search).ReindexAllAsync();
+
+        Assert.Equal(2, count);
+        Assert.Equal(["A", "B"], _search.Indexed.Single().Select(p => p.Sku));
     }
 }

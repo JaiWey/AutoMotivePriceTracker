@@ -7,6 +7,7 @@ public class PriceScrapingService : IPriceScrapingService
 {
     private readonly IEnumerable<IProductScraper> _scrapers;
     private readonly IProductRepository _products;
+    private readonly ISearchIndexService _searchIndex;
     private readonly ILogger<PriceScrapingService> _logger;
 
     // Each product needs its own page load, so a first run is spread over several runs.
@@ -15,10 +16,12 @@ public class PriceScrapingService : IPriceScrapingService
     public PriceScrapingService(
         IEnumerable<IProductScraper> scrapers,
         IProductRepository products,
+        ISearchIndexService searchIndex,
         ILogger<PriceScrapingService> logger)
     {
         _scrapers = scrapers;
         _products = products;
+        _searchIndex = searchIndex;
         _logger = logger;
     }
 
@@ -40,6 +43,22 @@ public class PriceScrapingService : IPriceScrapingService
             {
                 _logger.LogError(ex, "Scrape failed for {Retailer}", scraper.Retailer);
             }
+        }
+
+        await ReindexSearchAsync(ct);
+    }
+
+    private async Task ReindexSearchAsync(CancellationToken ct)
+    {
+        try
+        {
+            var count = await _searchIndex.ReindexAllAsync(ct);
+            _logger.LogInformation("Reindexed {Count} products for search", count);
+        }
+        catch (Exception ex)
+        {
+            // Search is derived data (rebuildable from the database); never fail the scrape over it.
+            _logger.LogError(ex, "Search reindex failed");
         }
     }
 

@@ -84,6 +84,43 @@ describe('Products page', () => {
     expect(names(el)).toEqual(['Brake Pads Front']);
   });
 
+  it('uses ranked server search results once they answer the typed term', () => {
+    vi.useFakeTimers();
+    try {
+      const el = render();
+
+      setInput(el, '.search-input', 'brak pads');
+      TestBed.tick();
+      vi.advanceTimersByTime(250);
+      const req = http.expectOne(`${environment.apiUrl}/api/products/search?q=brak%20pads`);
+      req.flush([3, 2]);
+      TestBed.tick();
+
+      // Server order wins and the typo'd term matches, which a substring filter would not.
+      expect(names(el)).toEqual(['Castrol Edge', 'Brake Pads Front']);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('falls back to substring matching when the search call fails', () => {
+    vi.useFakeTimers();
+    try {
+      const el = render();
+
+      setInput(el, '.search-input', 'bendix');
+      TestBed.tick();
+      vi.advanceTimersByTime(250);
+      http.expectOne(`${environment.apiUrl}/api/products/search?q=bendix`)
+        .flush('x', { status: 500, statusText: 'Server Error' });
+      TestBed.tick();
+
+      expect(names(el)).toEqual(['Brake Pads Front']);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
   it('filters by category and retailer together', () => {
     const el = render();
     const [categorySelect, retailerSelect] = Array.from(el.querySelectorAll('select'));

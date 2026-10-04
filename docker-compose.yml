@@ -1,4 +1,4 @@
-# Local PostgreSQL for development and e2e tests.
+# Local PostgreSQL and Elasticsearch for development and e2e tests.
 #   docker compose up -d --wait
 # Matches ConnectionStrings:Default in src/AutoMotivePriceTracker.Web/appsettings.Development.json.
 services:
@@ -19,5 +19,24 @@ services:
       timeout: 3s
       retries: 30
 
+  # Single-node, security off: development only. Matches Elasticsearch:Url (default http://localhost:9200).
+  elasticsearch:
+    image: docker.elastic.co/elasticsearch/elasticsearch:9.2.0
+    container_name: autoprice-elasticsearch
+    environment:
+      discovery.type: single-node
+      xpack.security.enabled: "false"
+      ES_JAVA_OPTS: "-Xms512m -Xmx512m"
+    ports:
+      - "9200:9200"
+    volumes:
+      - autoprice-esdata:/usr/share/elasticsearch/data
+    healthcheck:
+      test: ["CMD-SHELL", "curl -fs http://localhost:9200/_cluster/health || exit 1"]
+      interval: 5s
+      timeout: 5s
+      retries: 30
+
 volumes:
   autoprice-pgdata:
+  autoprice-esdata:

@@ -1,6 +1,8 @@
 using AutoMotivePriceTracker.Application;
 using AutoMotivePriceTracker.Application.Abstractions;
+using AutoMotivePriceTracker.Application.Services;
 using AutoMotivePriceTracker.Infrastructure;
+using AutoMotivePriceTracker.Infrastructure.Search;
 using AutoMotivePriceTracker.Web.BackgroundServices;
 using AutoMotivePriceTracker.Web.Endpoints;
 using AutoMotivePriceTracker.Web.Json;
@@ -20,7 +22,9 @@ builder.Host.UseSerilog((context, services, logger) => logger
 var connectionString = builder.Configuration.GetConnectionString("Default")
                        ?? throw new InvalidOperationException("ConnectionStrings:Default is not configured.");
 builder.Services.AddApplication();
-builder.Services.AddInfrastructure(connectionString);
+var elasticsearch = builder.Configuration.GetSection(ElasticsearchOptions.SectionName).Get<ElasticsearchOptions>()
+                    ?? new ElasticsearchOptions();
+builder.Services.AddInfrastructure(connectionString, elasticsearch);
 
 // Scraping can be switched off (e.g. for end-to-end tests): no scrapers, no scheduled run.
 var scrapingEnabled = builder.Configuration.GetValue("Scraping:Enabled", true);
@@ -45,6 +49,22 @@ var app = builder.Build();
 
 // Apply migrations on startup
 await app.Services.InitializeDatabaseAsync();
+
+// Build the search index in the background so startup never waits for (or fails on) Elasticsearch.
+// Search works as soon as it finishes; a failure is logged and the next scrape or reindex retries it.
+app.Lifetime.ApplicationStarted.Register(() => _ = Task.Run(async () =>
+{
+    try
+    {
+        await using var scope = app.Services.CreateAsyncScope();
+        var count = await scope.ServiceProvider.GetRequiredService<ISearchIndexService>().ReindexAllAsync();
+        app.Logger.LogInformation("Indexed {Count} products for search", count);
+    }
+    catch (Exception ex)
+    {
+        app.Logger.LogError(ex, "Initial search indexing failed; search stays unavailable until the next reindex");
+    }
+}));
 
 app.UseSerilogRequestLogging();
 app.UseCors(CorsPolicy);

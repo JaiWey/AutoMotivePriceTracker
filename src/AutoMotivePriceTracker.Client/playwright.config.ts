@@ -1,13 +1,13 @@
 import { defineConfig } from '@playwright/test';
 import path from 'node:path';
-import { dotnetConnectionString } from './e2e/db';
+import { dotnetConnectionString, esIndex, esUrl } from './e2e/db';
 
 const API_PORT = 5099;
 const WEB_PORT = 4299;
 const webUrl = `http://localhost:${WEB_PORT}`;
 const root = path.resolve(__dirname, '../..');
 
-// Isolated stack: its own API (port 5099, its own PostgreSQL database, scraping disabled so nothing
+// Isolated stack: its own API (port 5099, its own PostgreSQL database and Elasticsearch index, scraping disabled so nothing
 // touches real retailers) and an Angular dev server pointed at it (environment.e2e.ts).
 
 export default defineConfig({
@@ -36,6 +36,8 @@ export default defineConfig({
         ASPNETCORE_ENVIRONMENT: 'Development',
         ConnectionStrings__Default: dotnetConnectionString,
         Scraping__Enabled: 'false',
+        Elasticsearch__Url: esUrl,
+        Elasticsearch__Index: esIndex,
         Cors__AllowedOrigins__0: webUrl,
       },
     },

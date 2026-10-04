@@ -6,12 +6,15 @@ namespace AutoMotivePriceTracker.Application.Services;
 public class ProductCatalogService : IProductCatalogService
 {
     private const int HomeSectionSize = 8;
+    private const int MaxSearchResults = 2000;
 
     private readonly IProductRepository _products;
+    private readonly IProductSearch _search;
 
-    public ProductCatalogService(IProductRepository products)
+    public ProductCatalogService(IProductRepository products, IProductSearch search)
     {
         _products = products;
+        _search = search;
     }
 
     public async Task<HomeSummaryDto> GetHomeSummaryAsync(CancellationToken ct = default)
@@ -31,6 +34,12 @@ public class ProductCatalogService : IProductCatalogService
     {
         var all = await _products.GetAllWithLatestPriceAsync(ct);
         return all.Select(ProductSummaryDto.From).ToList();
+    }
+
+    public async Task<IReadOnlyList<int>> SearchProductIdsAsync(string query, CancellationToken ct = default)
+    {
+        var text = (query ?? string.Empty).Trim();
+        return text.Length == 0 ? Array.Empty<int>() : await _search.SearchIdsAsync(text, MaxSearchResults, ct);
     }
 
     public async Task<ProductDetailDto?> GetProductAsync(int id, CancellationToken ct = default)

@@ -1,5 +1,7 @@
 import { Component, computed, inject, signal } from '@angular/core';
+import { toObservable, toSignal } from '@angular/core/rxjs-interop';
 import { FormsModule } from '@angular/forms';
+import { catchError, debounce, distinctUntilChanged, map, of, switchMap, timer } from 'rxjs';
 import { ProductSummary } from '../models/models';
 import { Api } from '../services/api';
 import { ProductCard } from '../shared/product-card';
@@ -11,7 +13,7 @@ import { ProductCard } from '../shared/product-card';
     <div class="page-header"><h1>Products</h1></div>
 
     <div class="filter-bar">
-      <input class="search-input" type="text" placeholder="Search name or brand..."
+      <input class="search-input" type="text" placeholder="Search name, brand or features..."
              [ngModel]="search()" (ngModelChange)="search.set($event)" />
       <select class="filter-select" [ngModel]="category()" (ngModelChange)="category.set($event)">
         <option value="">All Categories</option>
@@ -57,6 +59,26 @@ export class Products {
   protected readonly retailer = signal('');
   protected readonly onSaleOnly = signal(false);
 
+  private readonly api = inject(Api);
+
+  /** Server-side search result for the term it answered; null while pending, blank or failed. */
+  private readonly searchResult = toSignal(
+    toObservable(this.search).pipe(
+      map((q) => q.trim()),
+      distinctUntilChanged(),
+      debounce((q) => (q ? timer(250) : of(0))),
+      switchMap((term) =>
+        term
+          ? this.api.searchProducts(term).pipe(
+              map((ids) => ({ term, ids })),
+              catchError(() => of(null)),
+            )
+          : of(null),
+      ),
+    ),
+    { initialValue: null },
+  );
+
   protected readonly categories = computed(() =>
     [...new Set(this.all().map((p) => p.category).filter((c): c is string => !!c))].sort(),
   );
@@ -66,9 +88,20 @@ export class Products {
     const category = this.category();
     const retailer = this.retailer();
     const onSale = this.onSaleOnly();
-    return this.all().filter(
+
+    // Ranked server results once they answer the current term; until then (or if the call fails)
+    // fall back to a plain substring match so typing never shows a stale or empty list.
+    const result = this.searchResult();
+    const ranked = term && result?.term.toLowerCase() === term ? result.ids : null;
+    let candidates = this.all();
+    if (ranked) {
+      const byId = new Map(candidates.map((p) => [p.id, p]));
+      candidates = ranked.map((id) => byId.get(id)).filter((p): p is ProductSummary => !!p);
+    }
+
+    return candidates.filter(
       (p) =>
-        (!term || p.name.toLowerCase().includes(term) || (p.brand ?? '').toLowerCase().includes(term)) &&
+        (ranked || !term || p.name.toLowerCase().includes(term) || (p.brand ?? '').toLowerCase().includes(term)) &&
         (!category || p.category === category) &&
         (!retailer || p.retailer === retailer) &&
         (!onSale || p.isOnSale),
@@ -76,7 +109,7 @@ export class Products {
   });
 
   constructor() {
-    inject(Api).products().subscribe({
+    this.api.products().subscribe({
       next: (products) => {
         this.all.set(products);
         this.loading.set(false);

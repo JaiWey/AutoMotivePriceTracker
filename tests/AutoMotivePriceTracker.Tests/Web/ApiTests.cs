@@ -133,6 +133,8 @@ public sealed class ApiEndpointsTests : IAsyncLifetime
 {
     private readonly FakeProductRepository _repo = new();
     private readonly GatedScrapingService _scraping = new();
+    private readonly FakeProductSearch _search = new();
+    private readonly FakeSearchIndexService _index = new();
     private WebApplication _app = null!;
     private HttpClient _client = null!;
 
@@ -142,6 +144,8 @@ public sealed class ApiEndpointsTests : IAsyncLifetime
         builder.WebHost.UseTestServer();
         builder.Services.AddApiJson();
         builder.Services.AddSingleton<IProductRepository>(_repo);
+        builder.Services.AddSingleton<IProductSearch>(_search);
+        builder.Services.AddSingleton<ISearchIndexService>(_index);
         builder.Services.AddSingleton<IPriceScrapingService>(_scraping);
         builder.Services.AddScoped<IProductCatalogService, ProductCatalogService>();
         builder.Services.AddSingleton<ScrapeRunCoordinator>();
@@ -157,6 +161,37 @@ public sealed class ApiEndpointsTests : IAsyncLifetime
         _scraping.Release();
         _client.Dispose();
         await _app.DisposeAsync();
+    }
+
+    [Fact]
+    public async Task Search_returns_ranked_ids_for_the_query_string()
+    {
+        _search.Result = [9, 4];
+
+        var ids = await _client.GetFromJsonAsync<int[]>("/api/products/search?q=oil%20fliters");
+
+        Assert.Equal([9, 4], ids);
+        Assert.Equal("oil fliters", _search.LastQuery);
+    }
+
+    [Fact]
+    public async Task Search_without_a_query_returns_an_empty_list()
+    {
+        var ids = await _client.GetFromJsonAsync<int[]>("/api/products/search");
+
+        Assert.Empty(ids!);
+        Assert.Equal(0, _search.SearchCalls);
+    }
+
+    [Fact]
+    public async Task Reindex_endpoint_rebuilds_the_index_and_reports_the_count()
+    {
+        var response = await _client.PostAsync("/api/admin/reindex", null);
+
+        response.EnsureSuccessStatusCode();
+        using var doc = JsonDocument.Parse(await response.Content.ReadAsStringAsync());
+        Assert.Equal(42, doc.RootElement.GetProperty("indexed").GetInt32());
+        Assert.Equal(1, _index.Reindexes);
     }
 
     [Fact]

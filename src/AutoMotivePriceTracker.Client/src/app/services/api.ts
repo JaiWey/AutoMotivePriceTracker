@@ -17,6 +17,11 @@ export class Api {
     return this.http.get<ProductSummary[]>(`${this.base}/products`);
   }
 
+  /** Ids of products matching the free-text query (typo-tolerant, incl. features), best match first. */
+  searchProducts(query: string): Observable<number[]> {
+    return this.http.get<number[]>(`${this.base}/products/search`, { params: { q: query } });
+  }
+
   product(id: number): Observable<ProductDetail> {
     return this.http.get<ProductDetail>(`${this.base}/products/${id}`);
   }

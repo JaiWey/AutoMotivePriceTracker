@@ -1,3 +1,4 @@
+using AutoMotivePriceTracker.Application.Services;
 using AutoMotivePriceTracker.Application.Abstractions;
 using AutoMotivePriceTracker.Domain.Entities;
 using AutoMotivePriceTracker.Domain.Enums;
@@ -84,5 +85,41 @@ public class FakeScraper : IProductScraper
         Calls++;
         if (Throws != null) throw Throws;
         return Task.FromResult<IEnumerable<Product>>(Products);
+    }
+}
+
+public class FakeProductSearch : IProductSearch
+{
+    public List<int> Result { get; set; } = [];
+    public string? LastQuery { get; private set; }
+    public int? LastTake { get; private set; }
+    public int SearchCalls { get; private set; }
+    public List<IReadOnlyCollection<Product>> Indexed { get; } = [];
+
+    public Task<IReadOnlyList<int>> SearchIdsAsync(string query, int take, CancellationToken ct = default)
+    {
+        SearchCalls++;
+        LastQuery = query;
+        LastTake = take;
+        return Task.FromResult<IReadOnlyList<int>>(Result);
+    }
+
+    public Task IndexAsync(IReadOnlyCollection<Product> products, CancellationToken ct = default)
+    {
+        Indexed.Add(products);
+        return Task.CompletedTask;
+    }
+}
+
+public class FakeSearchIndexService : ISearchIndexService
+{
+    public int Reindexes { get; private set; }
+    public Exception? Throws { get; set; }
+
+    public Task<int> ReindexAllAsync(CancellationToken ct = default)
+    {
+        Reindexes++;
+        if (Throws != null) throw Throws;
+        return Task.FromResult(42);
     }
 }
