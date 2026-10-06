@@ -11,10 +11,6 @@ output "region" {
   value = var.region
 }
 
-output "api_ecr_repository_url" {
-  value = aws_ecr_repository.api.repository_url
-}
-
 output "ssr_ecr_repository_url" {
   value = aws_ecr_repository.ssr.repository_url
 }

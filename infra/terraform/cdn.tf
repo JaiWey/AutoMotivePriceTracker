@@ -42,7 +42,7 @@ resource "aws_cloudfront_vpc_origin" "api" {
   }
 }
 
-# Tells the SSR server which public host and scheme the viewer used, so the URLs it builds (and the API origin
+# Tells the SSR server which public host the viewer used, so the URLs it builds (and the API origin
 # it derives for server-side calls) are the CloudFront ones rather than the Lambda Function URL's.
 resource "aws_cloudfront_function" "forwarded_host" {
   name    = "${var.name}-forwarded-host"
@@ -51,8 +51,8 @@ resource "aws_cloudfront_function" "forwarded_host" {
   code    = <<-JS
     function handler(event) {
       var request = event.request;
-      request.headers['x-forwarded-host'] = { value: request.headers.host.value };
-      request.headers['x-forwarded-proto'] = { value: 'https' };
+      // x-forwarded-* are restricted headers in CloudFront Functions, so use a custom name; server.ts maps it.
+      request.headers['x-viewer-host'] = { value: request.headers.host.value };
       return request;
     }
   JS
@@ -64,7 +64,7 @@ resource "aws_cloudfront_origin_request_policy" "ssr" {
   headers_config {
     header_behavior = "whitelist"
     headers {
-      items = ["x-forwarded-host", "x-forwarded-proto"]
+      items = ["x-viewer-host"]
     }
   }
   cookies_config {

@@ -3,10 +3,11 @@
   Builds and deploys AutoMotivePriceTracker to AWS (infrastructure in infra/terraform).
 
 .DESCRIPTION
-  1. terraform apply for the two ECR repositories only (the Lambda needs its image to exist before it is created)
-  2. builds the API image and the Angular SSR (Lambda) image and pushes them to ECR
+  1. terraform apply for the SSR ECR repository only (the Lambda needs its image to exist before it is created)
+  2. publishes the API as a self-contained linux-x64 build (no Docker on the host), and builds and pushes the
+     Angular SSR (Lambda) image
   3. terraform apply for everything else
-  4. syncs the Angular static files to S3, updates the Lambda image, uploads the compose file,
+  4. syncs the Angular static files to S3, updates the Lambda image, uploads the API build to S3,
      runs /opt/app/deploy.sh on the API host through SSM, and invalidates CloudFront
 
   Both terraform applies ask for confirmation unless -AutoApprove is passed. Safe to re-run for every release.
@@ -43,12 +44,11 @@ function Get-TfOutput([string]$OutputName) {
 $account = (& aws sts get-caller-identity --query Account --output text)
 if ($LASTEXITCODE -ne 0) { throw 'AWS credentials are not configured (aws configure).' }
 $registry = "$account.dkr.ecr.$Region.amazonaws.com"
-$apiImage = "$registry/$Name-api:latest"
 $ssrImage = "$registry/$Name-ssr:latest"
 
 Write-Host '== 1/4 ECR repositories' -ForegroundColor Cyan
 Invoke-Native terraform (@("-chdir=$tf", 'init', '-input=false'))
-Invoke-Native terraform (@("-chdir=$tf", 'apply', '-target=aws_ecr_repository.api', '-target=aws_ecr_repository.ssr') + $approve)
+Invoke-Native terraform (@("-chdir=$tf", 'apply', '-target=aws_ecr_repository.ssr') + $approve)
 
 if (-not $SkipBuild) {
     Write-Host '== 2/4 Build and push images' -ForegroundColor Cyan
@@ -57,11 +57,25 @@ if (-not $SkipBuild) {
     $password | & docker login --username AWS --password-stdin $registry
     if ($LASTEXITCODE -ne 0) { throw 'docker login failed' }
 
-    Invoke-Native docker @('build', '-f', (Join-Path $root 'src/AutoMotivePriceTracker.Web/Dockerfile'), '-t', $apiImage, $root)
-    Invoke-Native docker @('build', '-t', $ssrImage, (Join-Path $root 'src/AutoMotivePriceTracker.Client'))
-    Invoke-Native docker @('push', $apiImage)
+    Invoke-Native docker @('build', '--platform', 'linux/amd64', '--provenance=false', '--sbom=false', '-t', $ssrImage, (Join-Path $root 'src/AutoMotivePriceTracker.Client'))
     Invoke-Native docker @('push', $ssrImage)
 }
+
+# The API host runs the build directly under systemd; self-contained, so it needs no .NET runtime installed
+$apiArchive = Join-Path ([IO.Path]::GetTempPath()) 'autoprice-api.tar.gz'
+if (-not $SkipBuild) {
+    Write-Host 'Publishing the API (linux-x64, self-contained)' -ForegroundColor Cyan
+    $publishDir = Join-Path ([IO.Path]::GetTempPath()) "autoprice-api-$([guid]::NewGuid().ToString('N'))"
+    try {
+        Invoke-Native dotnet @('publish', (Join-Path $root 'src/AutoMotivePriceTracker.Web'), '-c', 'Release', '-r', 'linux-x64', '--self-contained', '-o', $publishDir)
+        # Scraping is off in the cloud, so skip the 200 MB Playwright driver bundled in the publish output
+        Remove-Item -Recurse -Force (Join-Path $publishDir '.playwright') -ErrorAction SilentlyContinue
+        Invoke-Native tar @('-czf', $apiArchive, '-C', $publishDir, '.')
+    } finally {
+        Remove-Item -Recurse -Force $publishDir -ErrorAction SilentlyContinue
+    }
+}
+if (-not (Test-Path $apiArchive)) { throw "No API build at $apiArchive (run without -SkipBuild first)." }
 
 Write-Host '== 3/4 Infrastructure' -ForegroundColor Cyan
 Invoke-Native terraform (@("-chdir=$tf", 'apply') + $approve)
@@ -89,7 +103,7 @@ Remove-Item -Recurse -Force $tmp
 Invoke-Native aws @('lambda', 'update-function-code', '--function-name', $lambdaName, '--image-uri', $ssrImage, '--region', $Region, '--output', 'text', '--query', 'LastUpdateStatus')
 Invoke-Native aws @('lambda', 'wait', 'function-updated', '--function-name', $lambdaName, '--region', $Region)
 
-Invoke-Native aws @('s3', 'cp', (Join-Path $PSScriptRoot 'docker-compose.api.yml'), "s3://$artifactsBucket/docker-compose.api.yml", '--region', $Region)
+Invoke-Native aws @('s3', 'cp', $apiArchive, "s3://$artifactsBucket/api.tar.gz", '--region', $Region)
 
 # Wait for the SSM agent (a freshly created instance needs a minute or two), then run the host's deploy script
 Write-Host 'Waiting for the API host to register with SSM...'
@@ -123,4 +137,4 @@ if ($status -ne 'Success') { throw "Remote deploy finished with status $status" 
 Invoke-Native aws @('cloudfront', 'create-invalidation', '--distribution-id', $distributionId, '--paths', '/*', '--query', 'Invalidation.Id', '--output', 'text')
 
 Write-Host "`nDeployed: $siteUrl" -ForegroundColor Green
-Write-Host 'The API indexes products for search and scrapes on its own schedule (first scrape ~10 s after start).'
+Write-Host 'Scraping is disabled in the cloud: load product data into the database, then POST /api/admin/reindex to build the search index.'

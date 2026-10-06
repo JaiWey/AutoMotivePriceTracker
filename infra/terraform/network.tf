@@ -15,7 +15,8 @@ resource "aws_internet_gateway" "main" {
   tags   = { Name = var.name }
 }
 
-# Public subnets only hold the NAT gateway; everything else lives in the private subnets.
+# Public subnets hold the API host (public IP for outbound SSM/S3 only, no inbound rule opens it up);
+# the database and search domain live in the private subnets.
 resource "aws_subnet" "public" {
   count                   = 2
   vpc_id                  = aws_vpc.main.id
@@ -35,21 +36,6 @@ resource "aws_subnet" "private" {
   tags = { Name = "${var.name}-private-${count.index}" }
 }
 
-# One NAT gateway (single AZ) keeps the cost to roughly one NAT; the API needs it to reach the retailers,
-# ECR and SSM.
-resource "aws_eip" "nat" {
-  domain = "vpc"
-  tags   = { Name = "${var.name}-nat" }
-}
-
-resource "aws_nat_gateway" "main" {
-  allocation_id = aws_eip.nat.id
-  subnet_id     = aws_subnet.public[0].id
-
-  depends_on = [aws_internet_gateway.main]
-  tags       = { Name = var.name }
-}
-
 resource "aws_route_table" "public" {
   vpc_id = aws_vpc.main.id
 
@@ -61,13 +47,9 @@ resource "aws_route_table" "public" {
   tags = { Name = "${var.name}-public" }
 }
 
+# No default route: the database and search domain never need the internet.
 resource "aws_route_table" "private" {
   vpc_id = aws_vpc.main.id
-
-  route {
-    cidr_block     = "0.0.0.0/0"
-    nat_gateway_id = aws_nat_gateway.main.id
-  }
 
   tags = { Name = "${var.name}-private" }
 }
@@ -92,7 +74,7 @@ resource "aws_security_group" "api" {
   vpc_id      = aws_vpc.main.id
 
   egress {
-    description = "Retailers, ECR, SSM, S3, database and search"
+    description = "SSM, S3, database and search"
     from_port   = 0
     to_port     = 0
     protocol    = "-1"

@@ -1,25 +1,43 @@
 #!/bin/bash
-# Pulls the latest API image and restarts it. Invoked through SSM by deploy/deploy.ps1; safe to run repeatedly.
+# Installs the latest published API build and restarts it. Invoked through SSM by deploy/deploy.ps1; safe to run repeatedly.
 set -euo pipefail
-cd /opt/app
 
-aws s3 cp "s3://${bucket}/docker-compose.api.yml" docker-compose.yml --region ${region}
+APP=/opt/app/api
 
 param() {
   aws ssm get-parameter --name "$1" --with-decryption --query Parameter.Value --output text --region ${region}
 }
 
+aws s3 cp "s3://${bucket}/api.tar.gz" /tmp/api.tar.gz --region ${region}
+
+rm -rf "$APP.new"
+mkdir -p "$APP.new"
+tar -xzf /tmp/api.tar.gz -C "$APP.new"
+rm -f /tmp/api.tar.gz
+chmod +x "$APP.new/AutoMotivePriceTracker.Web"
+ln -sfn /var/log/autoprice "$APP.new/logs"
+chown -R autoprice:autoprice "$APP.new"
+
+systemctl stop autoprice-api 2>/dev/null || true
+rm -rf "$APP"
+mv "$APP.new" "$APP"
+
+# Read by systemd as root, so the secrets stay unreadable to everyone else
 umask 077
-cat > .env <<ENV
-API_IMAGE=${api_image}
+cat > /opt/app/api.env <<ENV
+ASPNETCORE_URLS=http://0.0.0.0:8080
+ASPNETCORE_ENVIRONMENT=Production
+DOTNET_gcServer=0
+DOTNET_SYSTEM_GLOBALIZATION_INVARIANT=1
 ConnectionStrings__Default=$(param ${db_param})
 Origin__SharedSecret=$(param ${origin_param})
 Search__Url=${search_url}
 Search__Index=products
-Scraping__Enabled=true
+Scraping__Enabled=false
 ENV
 
-aws ecr get-login-password --region ${region} | docker login --username AWS --password-stdin ${registry}
-docker compose pull
-docker compose up -d --remove-orphans
-docker image prune -f
+systemctl daemon-reload
+systemctl enable autoprice-api
+systemctl restart autoprice-api
+sleep 5
+systemctl is-active autoprice-api

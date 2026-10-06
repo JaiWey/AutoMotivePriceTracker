@@ -1,8 +1,9 @@
 #!/bin/bash
 # First-boot setup for the API host (Amazon Linux 2023). Runs once as root.
+# The API runs as a self-contained .NET build under systemd; there is no Docker on the host.
 set -euxo pipefail
 
-# Swap: Chromium spikes memory during scrapes and a free-tier instance only has 1 GB
+# Swap: a free-tier instance only has 1 GB
 if [ ! -f /swapfile ]; then
   fallocate -l 2G /swapfile
   chmod 600 /swapfile
@@ -11,17 +12,31 @@ if [ ! -f /swapfile ]; then
   echo '/swapfile none swap sw 0 0' >> /etc/fstab
 fi
 
-dnf install -y docker
-systemctl enable --now docker
+useradd --system --home-dir /opt/app --shell /sbin/nologin autoprice || true
+mkdir -p /opt/app /var/log/autoprice
+chown autoprice:autoprice /var/log/autoprice
 
-# Compose v2 plugin (not packaged for AL2023)
-mkdir -p /usr/local/lib/docker/cli-plugins
-curl -fsSL https://github.com/docker/compose/releases/download/v2.40.3/docker-compose-linux-x86_64 \
-  -o /usr/local/lib/docker/cli-plugins/docker-compose
-chmod +x /usr/local/lib/docker/cli-plugins/docker-compose
+cat > /etc/systemd/system/autoprice-api.service <<'UNIT_EOF'
+[Unit]
+Description=AutoMotivePriceTracker API
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+User=autoprice
+WorkingDirectory=/opt/app/api
+EnvironmentFile=/opt/app/api.env
+ExecStart=/opt/app/api/AutoMotivePriceTracker.Web
+Restart=always
+RestartSec=5
+# Leave room for the OS on a 1 GB instance
+MemoryMax=800M
+
+[Install]
+WantedBy=multi-user.target
+UNIT_EOF
 
 # Deploy script, run later through SSM by deploy/deploy.ps1
-mkdir -p /opt/app
 cat > /opt/app/deploy.sh <<'DEPLOY_EOF'
 ${deploy_script}
 DEPLOY_EOF

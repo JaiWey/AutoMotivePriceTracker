@@ -2,7 +2,7 @@ data "aws_ssm_parameter" "al2023" {
   name = "/aws/service/ami-amazon-linux-latest/al2023-ami-kernel-default-x86_64"
 }
 
-# --- Instance role: SSM Session Manager (no SSH), pull the image, read the deploy bundle and secrets ---
+# --- Instance role: SSM Session Manager (no SSH), download the API build, read secrets ---
 
 resource "aws_iam_role" "api" {
   name = "${var.name}-api"
@@ -31,16 +31,6 @@ resource "aws_iam_role_policy" "api" {
     Statement = [
       {
         Effect   = "Allow"
-        Action   = "ecr:GetAuthorizationToken"
-        Resource = "*"
-      },
-      {
-        Effect   = "Allow"
-        Action   = ["ecr:BatchGetImage", "ecr:GetDownloadUrlForLayer", "ecr:BatchCheckLayerAvailability"]
-        Resource = aws_ecr_repository.api.arn
-      },
-      {
-        Effect   = "Allow"
         Action   = "s3:GetObject"
         Resource = "${aws_s3_bucket.artifacts.arn}/*"
       },
@@ -61,12 +51,14 @@ resource "aws_iam_instance_profile" "api" {
   role = aws_iam_role.api.name
 }
 
-# --- The API host: private subnet, no public IP, reached only by CloudFront's VPC origin ---
+# --- The API host: public subnet so it can reach SSM/S3 without a NAT gateway. The security group has
+# no inbound rule except CloudFront's VPC origin, so the public IP is not reachable from the internet. ---
 
 resource "aws_instance" "api" {
-  ami                    = data.aws_ssm_parameter.al2023.value
-  instance_type          = var.api_instance_type
-  subnet_id              = aws_subnet.private[0].id
+  ami                         = data.aws_ssm_parameter.al2023.value
+  instance_type               = var.api_instance_type
+  subnet_id                   = aws_subnet.public[0].id
+  associate_public_ip_address = true
   vpc_security_group_ids = [aws_security_group.api.id]
   iam_instance_profile   = aws_iam_instance_profile.api.name
 
@@ -85,8 +77,6 @@ resource "aws_instance" "api" {
     deploy_script = templatefile("${path.module}/templates/deploy.sh.tftpl", {
       region       = var.region
       bucket       = aws_s3_bucket.artifacts.id
-      registry     = split("/", aws_ecr_repository.api.repository_url)[0]
-      api_image    = "${aws_ecr_repository.api.repository_url}:latest"
       db_param     = aws_ssm_parameter.db_connection_string.name
       origin_param = aws_ssm_parameter.origin_secret.name
       search_url   = "https://${aws_opensearch_domain.search.endpoint}"
@@ -102,5 +92,5 @@ resource "aws_instance" "api" {
 
   tags = { Name = "${var.name}-api" }
 
-  depends_on = [aws_nat_gateway.main]
+  depends_on = [aws_route_table_association.public]
 }

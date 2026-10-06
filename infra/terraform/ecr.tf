@@ -1,9 +1,5 @@
 # The free tier includes 500 MB of private ECR storage, so keep a single image per repository.
-
-resource "aws_ecr_repository" "api" {
-  name         = "${var.name}-api"
-  force_delete = true
-}
+# Only the SSR Lambda uses ECR; the API host runs a self-contained build downloaded from S3.
 
 resource "aws_ecr_repository" "ssr" {
   name         = "${var.name}-ssr"
@@ -11,7 +7,7 @@ resource "aws_ecr_repository" "ssr" {
 }
 
 resource "aws_ecr_lifecycle_policy" "keep_one" {
-  for_each   = { api = aws_ecr_repository.api.name, ssr = aws_ecr_repository.ssr.name }
+  for_each   = { ssr = aws_ecr_repository.ssr.name }
   repository = each.value
 
   policy = jsonencode({

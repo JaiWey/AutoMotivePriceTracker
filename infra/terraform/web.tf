@@ -32,7 +32,7 @@ resource "aws_s3_bucket_policy" "assets" {
   })
 }
 
-# --- Deploy bundle for the API host (docker-compose.api.yml) ---
+# --- Deploy bundle for the API host (the published API build, api.tar.gz) ---
 
 resource "aws_s3_bucket" "artifacts" {
   bucket        = "${var.name}-artifacts-${random_id.suffix.hex}"
@@ -81,11 +81,11 @@ resource "aws_lambda_function" "ssr" {
   environment {
     variables = {
       # Host / X-Forwarded-Host values the SSR server accepts (angular.json only allows localhost):
-      # the CloudFront domain (set as X-Forwarded-Host by the viewer-request function) and the Function URL host.
+      # the CloudFront domain (sent as X-Viewer-Host by the viewer-request function) and the Function URL host.
       NG_ALLOWED_HOSTS = "*.cloudfront.net,*.lambda-url.${var.region}.on.aws"
       AWS_LWA_PORT     = "8080"
       PORT             = "8080"
-      # Only reachable through CloudFront (AWS_IAM + origin access control), whose function sets X-Forwarded-*
+      # Only reachable through CloudFront (AWS_IAM + origin access control), whose function sets X-Viewer-Host
       TRUST_PROXY_HEADERS = "true"
     }
   }
