@@ -94,6 +94,7 @@ Layout (`infra/terraform`, `deploy/`): one CloudFront distribution is the only p
 ```powershell
 # prerequisites: aws configure, Docker, terraform; optional budget alert: -var budget_email=... in infra/terraform/terraform.tfvars
 pwsh deploy/deploy.ps1            # ECR repos -> build + push images -> terraform apply -> S3 sync, Lambda update, host deploy via SSM, CloudFront invalidation
+pwsh deploy/sync-db.ps1          # REPLACE the cloud data with the local compose database (SSM tunnel to RDS, pg_dump/pg_restore in postgres:17 containers), then reindex search; needs the Session Manager plugin
 terraform -chdir=infra/terraform destroy   # tear everything down
 ```
 
